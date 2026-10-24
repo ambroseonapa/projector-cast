@@ -66,3 +66,5 @@ button { width: 100%; margin-top: 18px; padding: 12px; border: 0; border-radius:
 .pick-card .detail { display: block; color: var(--muted); font-size: 11px; }
 .pick-card.selected { border-color: var(--accent); }
 .empty { color: var(--muted); font-size: 13px; padding: 8px 2px; }
+.live-hint { margin: 12px 0 0; padding: 10px 12px; border-radius: 8px; background: rgba(255, 176, 32, .1);
+  border: 1px solid rgba(255, 176, 32, .35); color: #ffd58a; font-size: 13px; text-align: left; }

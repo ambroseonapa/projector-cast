@@ -311,29 +311,38 @@
     /**
      * Called every 2 s with the projector's decoded frame rate. Frames sent faster than the projector
      * decodes them queue up and the picture lags behind the sound, so the send rate is capped just
-     * below the decode rate and raised again after 30 s of keeping up.
+     * below the decode rate. The cap is raised again after 10 s of keeping up (longer if a raise fails).
      */
     async adaptToProjector(decodedFps) {
-      if (this.stopped || !this.pc || !(decodedFps >= 0)) return;
-      const sent = this.lastSentFps || this.q.fps;
-      this.decodedSamples = (this.decodedSamples || []).concat(decodedFps).slice(-3);
-      if (this.decodedSamples.length < 3) return;
-      const avg = this.decodedSamples.reduce((a, b) => a + b, 0) / 3;
-      const cap = this.fpsCap || this.q.fps;
-      let next = cap;
-      if (avg >= 5 && avg < sent * 0.88) {
-        next = Math.max(10, Math.floor(avg * 0.9));
+      if (this.stopped || !this.pc || !(decodedFps >= 0) || this.lastSentFps == null) return;
+      this.samples = (this.samples || []).concat({ decoded: decodedFps, sent: this.lastSentFps }).slice(-3);
+      if (this.samples.length < 3) return;
+      const decoded = this.samples.reduce((a, x) => a + x.decoded, 0) / 3;
+      const sent = this.samples.reduce((a, x) => a + x.sent, 0) / 3;
+      // A still or paused source sends few frames; that says nothing about the projector.
+      if (sent < 12) {
         this.keptUpSince = 0;
-      } else if (this.fpsCap && avg >= Math.min(sent, cap) * 0.95) {
+        return;
+      }
+      const cap = this.fpsCap || this.q.fps;
+      this.raiseWait = this.raiseWait || 10000;
+      let next = cap;
+      if (decoded < sent * 0.88) {
+        next = Math.max(10, Math.floor(decoded * 0.9));
+        // The last raise overshot: wait longer before the next one.
+        if (this.raisedAt && Date.now() - this.raisedAt < 15000) this.raiseWait = Math.min(this.raiseWait * 2, 120000);
+        this.keptUpSince = 0;
+      } else if (this.fpsCap && sent >= cap * 0.85) {
         this.keptUpSince = this.keptUpSince || Date.now();
-        if (Date.now() - this.keptUpSince > 30000) {
+        if (Date.now() - this.keptUpSince > this.raiseWait) {
           next = Math.min(this.q.fps, cap + 5);
+          this.raisedAt = Date.now();
           this.keptUpSince = 0;
         }
       }
       if (next === cap) return;
       this.fpsCap = next >= this.q.fps ? 0 : next;
-      this.decodedSamples = [];
+      this.samples = [];
       // Under 24 fps, step down to 540p once: it decodes faster.
       if (this.fpsCap && this.fpsCap < 24 && this.q.width > 960 && !this.autoReduced) {
         this.autoReduced = true;
@@ -350,19 +359,28 @@
       this.q = QUALITY[key] || this.q;
       this.opts.quality = key;
       this.fpsCap = 0;
-      this.decodedSamples = [];
+      this.samples = [];
       try { await this.stream.getVideoTracks()[0].applyConstraints(this.videoConstraints()); } catch (_) { /* encoder scales */ }
       const sender = this.pc && this.pc.getSenders().find((x) => x.track && x.track.kind === 'video');
       if (sender) await this.tuneSender(sender);
     }
 
-    /** Applies new quality, content and buffer settings; reconnects (about a second). */
+    /** Applies quality, content and buffer settings. Only a buffer change needs a reconnect. */
     async update(changes) {
       if (this.stopped) return;
+      const reconnect = changes.buffer != null && changes.buffer !== (this.opts.buffer == null ? 150 : this.opts.buffer);
+      if (!reconnect) {
+        if (changes.content) {
+          this.opts.content = changes.content;
+          this.setContentHint(this.stream.getVideoTracks()[0]);
+        }
+        if (changes.quality) await this.setQuality(changes.quality);
+        return;
+      }
       Object.assign(this.opts, changes);
       this.q = QUALITY[this.opts.quality] || this.q;
       this.fpsCap = 0;
-      this.decodedSamples = [];
+      this.samples = [];
       const v = this.stream.getVideoTracks()[0];
       this.setContentHint(v);
       try { await v.applyConstraints(this.videoConstraints()); } catch (_) { /* encoder scales */ }

@@ -41,6 +41,7 @@ Projector remote:
 | Projector not found | Put both devices on the same network (guest networks often block this), or enter the projector's IP address under **Advanced**. |
 | Picture stalls | The projector switches decoder automatically. If it keeps stalling, choose display mode 4. |
 | Picture is choppy | Use **540p, 30 fps**. The PC lowers its frame rate to what the projector decodes; the status line shows *capped at N fps*. |
+| Video area black or frozen when casting a browser window | Browsers stop drawing video in covered or background windows. Keep the window visible, cast the entire screen, or turn off *Use graphics acceleration when available* in the browser's System settings. The PC app shows a notice when this happens. |
 | Black or flashing frames | Set **Advanced → Screen capture → Compatibility** (affects whole-screen capture only). |
 | No sound | Audio capture requires Windows. Check **Send sound** and the projector volume. |
 

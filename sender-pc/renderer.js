@@ -46,6 +46,7 @@ function startReport(target) {
     if (decoded && session) session.adaptToProjector(parseInt(decoded[1], 10)).catch(() => {});
     const text = p.error ? 'No answer: ' + p.error : (p.stats || 'No data yet');
     $('projStats').textContent = p.error ? text : `${p.mode || ''} · decoding: ${p.decoding || '?'}\n${text}`;
+    checkStill();
     timeline.push({ t: clock(), pc: $('stats').textContent.replace(/\n/g, ' · '), proj: text.replace(/\n+/g, ' | ') });
     if (timeline.length > 90) timeline.shift();
   }, 2000);
@@ -54,6 +55,29 @@ function startReport(target) {
 function stopReport() {
   clearInterval(reportTimer);
   reportTimer = null;
+  stillSince = 0;
+  $('liveHint').hidden = true;
+}
+
+// Browsers stop drawing video in windows that are covered or in the background, so a cast window
+// can show a frozen or black video area while its sound continues.
+let stillSince = 0;
+
+function checkStill() {
+  const s = selectedSource();
+  const fps = session && session.lastSentFps;
+  if (!s || s.kind !== 'window' || fps == null || fps >= 3) {
+    stillSince = 0;
+    $('liveHint').hidden = true;
+    return;
+  }
+  stillSince = stillSince || Date.now();
+  if (Date.now() - stillSince < 6000) return;
+  $('liveHint').textContent = `The picture from ${s.app === 'Other' ? 'this window' : s.app} is not changing. `
+    + 'If a video is playing, keep the window visible: browsers pause video drawing in covered or background windows. '
+    + 'Alternatively, turn off "Use graphics acceleration when available" in the browser settings (System section), '
+    + 'or cast the entire screen.';
+  $('liveHint').hidden = false;
 }
 
 async function copyReport() {

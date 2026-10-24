@@ -205,6 +205,21 @@ async function run(browser, opts, label, gpu) {
     console.log(`PASS then caps its frame rate at ${cap} fps (sending ${Math.round(sent)} fps)`);
     for (let i = 0; i < 3; i++) await sender.evaluate(() => window.session.adaptToProjector(10));
     assert.strictEqual(await sender.evaluate(() => window.qualityEvents.length), 1, 'steps down only once');
+    // A still source (paused video, background window) sends few frames: not a projector limit.
+    const before = await sender.evaluate(() => window.session.fpsCap);
+    const after = await sender.evaluate(async () => {
+      for (let i = 0; i < 3; i++) { window.session.lastSentFps = 2; await window.session.adaptToProjector(2); }
+      return window.session.fpsCap;
+    });
+    assert.strictEqual(after, before, 'still source leaves the cap alone: ' + before + ' -> ' + after);
+    console.log('PASS a still source does not lower the frame rate');
+    // Quality changes apply without a new connection.
+    const pcBefore = await receiver.evaluate(() => { window.__pc = pc; return true; });
+    await sender.evaluate(() => window.session.update({ quality: 'p720_30', buffer: 150 }));
+    await receiver.waitForTimeout(3000);
+    const same = await receiver.evaluate(() => window.__pc === pc && document.getElementById('video').videoWidth === 1280);
+    assert(pcBefore && same, 'quality change kept the connection');
+    console.log('PASS quality change applies without reconnecting');
     await ctx.close();
   }
   console.log('PASS 720p30 (new default)');

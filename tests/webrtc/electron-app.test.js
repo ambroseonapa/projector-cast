@@ -184,6 +184,10 @@ const RECEIVER = 'file://' + path.resolve(__dirname, '../../receiver-android/ass
   assert(one.w < 1000 && one.h < 800 && one.px[1] > 120 && one.px[0] < 60, 'projector shows only the green window: ' + JSON.stringify(one));
   console.log(`PASS casting one window: projector shows just that window (${one.w}x${one.h})`);
   assert.strictEqual(await win.textContent('#castingWhat'), 'Match Window');
+  // The test window never changes, like a browser that stopped drawing a background video.
+  await win.waitForFunction(() => !document.getElementById('liveHint').hidden, null, { timeout: 20000 });
+  assert(/not changing/.test(await win.textContent('#liveHint')), await win.textContent('#liveHint'));
+  console.log('PASS still window shows the "picture is not changing" advice');
 
   // Switch to the whole screen while casting, without reconnecting.
   const pcBefore = await receiver.evaluate(() => { window.__pcMark = pc; return true; });
