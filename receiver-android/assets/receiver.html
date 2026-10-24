@@ -1,0 +1,168 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  html, body { margin: 0; height: 100%; background: #000; color: #fff; overflow: hidden;
+    font-family: "Roboto", "Segoe UI", sans-serif; }
+  #video { position: fixed; top: 0; left: 0; right: 0; bottom: 0; width: 100%; height: 100%; object-fit: contain; background: #000;
+    display: none; }
+  #idle { position: fixed; top: 0; left: 0; right: 0; bottom: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; background: radial-gradient(circle at 50% 30%, #12324a, #05090e 70%); }
+  .title { font-size: 3.2vw; letter-spacing: .08em; color: #8fc9ff; text-transform: uppercase; }
+  .label { margin-top: 4vh; font-size: 2.4vw; color: #c8d6e3; }
+  #code { font-size: 13vw; font-weight: 700; letter-spacing: .12em; margin: 1vh 0 2vh; font-variant-numeric: tabular-nums; }
+  .hint { font-size: 1.9vw; color: #9fb2c4; max-width: 70vw; text-align: center; line-height: 1.5; }
+  #ip { margin-top: 3vh; font-size: 1.6vw; color: #6f8396; }
+  #status { margin-top: 3vh; font-size: 2vw; color: #ffd27a; min-height: 2.5vw; }
+  #badge { position: fixed; top: 2vh; right: 2vw; padding: .6vh 1.2vw; border-radius: 1vw;
+    background: rgba(0,0,0,.6); font-size: 1.5vw; color: #cfe6ff; display: none; }
+</style>
+</head>
+<body>
+<video id="video" autoplay playsinline></video>
+<div id="idle">
+  <div class="title">Projector Cast</div>
+  <div class="label">Connection code</div>
+  <div id="code">------</div>
+  <div class="hint">Open <b>Projector Cast</b> on your PC, type this code and press <b>Start casting</b>.<br>
+    The PC and projector must be on the same Wi-Fi / network.</div>
+  <div id="ip"></div>
+  <div id="status"></div>
+</div>
+<div id="badge"></div>
+
+<script>
+var pc = null;
+var video = document.getElementById('video');
+var idle = document.getElementById('idle');
+var badge = document.getElementById('badge');
+var statusEl = document.getElementById('status');
+var badgeTimer = null, dropTimer = null;
+
+function showInfo(code, ips, name) {
+  document.getElementById('code').textContent = code;
+  document.getElementById('ip').textContent = ips ? ('Projector address: ' + ips) : 'No network connection';
+}
+
+function setStatus(t) { statusEl.textContent = t || ''; }
+
+function showBadge(text, ms) {
+  badge.textContent = text;
+  badge.style.display = 'block';
+  clearTimeout(badgeTimer);
+  if (ms) badgeTimer = setTimeout(function () { badge.style.display = 'none'; }, ms);
+}
+
+function closePc() {
+  clearTimeout(dropTimer);
+  if (pc) {
+    pc.ontrack = pc.onaddstream = pc.oniceconnectionstatechange = null;
+    try { pc.close(); } catch (e) {}
+    pc = null;
+  }
+}
+
+function stopCast(reason) {
+  closePc();
+  video.pause();
+  video.srcObject = null;
+  video.style.display = 'none';
+  idle.style.display = 'flex';
+  badge.style.display = 'none';
+  setStatus(reason || '');
+}
+
+function attachStream(stream) {
+  if (video.srcObject !== stream) video.srcObject = stream;
+  video.muted = false;
+  var p = video.play();
+  if (p && p.catch) p.catch(function () {
+    // Autoplay with sound refused: play muted rather than show nothing.
+    video.muted = true; video.play();
+  });
+  video.style.display = 'block';
+  idle.style.display = 'none';
+}
+
+function waitForIce(conn, ms) {
+  return new Promise(function (resolve) {
+    if (conn.iceGatheringState === 'complete') return resolve();
+    var t = setTimeout(resolve, ms);
+    conn.addEventListener('icegatheringstatechange', function () {
+      if (conn.iceGatheringState === 'complete') { clearTimeout(t); resolve(); }
+    });
+  });
+}
+
+// Ask for stereo, high-bitrate sound (by default the browser negotiates mono-quality voice).
+function wantStereo(sdp) {
+  var m = /a=rtpmap:(\d+) opus\/48000/i.exec(sdp);
+  if (!m) return sdp;
+  var re = new RegExp('a=fmtp:' + m[1] + ' ([^\\r\\n]*)');
+  return sdp.replace(re, function (line, params) {
+    var p = params.replace(/;?\s*(stereo|sprop-stereo|maxaveragebitrate)=\d+/g, '');
+    return 'a=fmtp:' + m[1] + ' ' + p + ';stereo=1;sprop-stereo=1;maxaveragebitrate=256000';
+  });
+}
+
+// Browsers may hide their address behind a random "xxxx.local" name the projector cannot look up.
+// We already know the PC's real address from the HTTP connection, so put it back.
+function unhideAddresses(sdp, ip) {
+  if (!ip || !/^\d{1,3}(\.\d{1,3}){3}$/.test(ip)) return sdp;
+  return sdp.replace(/^(a=candidate:\S+ \d+ udp \d+ )[0-9a-f-]+\.local( )/gim, '$1' + ip + '$2');
+}
+
+function handleOffer(id, offerText, sender, senderIp) {
+  var offer;
+  try { offer = JSON.parse(offerText); } catch (e) { Cast.answer(id, '', 'bad offer'); return; }
+  if (!offer || offer.type !== 'offer' || typeof offer.sdp !== 'string') { Cast.answer(id, '', 'bad offer'); return; }
+
+  offer = { type: 'offer', sdp: unhideAddresses(offer.sdp, senderIp) };
+  closePc();
+  setStatus('Connecting to ' + sender + '...');
+  var conn = new RTCPeerConnection({ iceServers: [], bundlePolicy: 'max-bundle' });
+  pc = conn;
+  var stream = null;
+
+  conn.ontrack = function (ev) {
+    stream = (ev.streams && ev.streams[0]) || stream || new MediaStream();
+    if (stream.getTracks().indexOf(ev.track) < 0) stream.addTrack(ev.track);
+    attachStream(stream);
+  };
+  if (!('ontrack' in conn)) conn.onaddstream = function (ev) { attachStream(ev.stream); };
+
+  conn.oniceconnectionstatechange = function () {
+    var st = conn.iceConnectionState;
+    if (st === 'connected' || st === 'completed') {
+      clearTimeout(dropTimer);
+      showBadge('Casting from ' + sender, 4000);
+    } else if (st === 'disconnected') {
+      showBadge('Connection weak...', 0);
+      clearTimeout(dropTimer);
+      dropTimer = setTimeout(function () { if (pc === conn) stopCast('Connection lost. Start casting again on the PC.'); }, 8000);
+    } else if (st === 'failed' || st === 'closed') {
+      if (pc === conn) stopCast('Connection lost. Start casting again on the PC.');
+    }
+  };
+
+  conn.setRemoteDescription(offer)
+    .then(function () { return conn.createAnswer(); })
+    .then(function (ans) { return conn.setLocalDescription({ type: 'answer', sdp: wantStereo(ans.sdp) }); })
+    .then(function () { return waitForIce(conn, 3000); })
+    .then(function () {
+      Cast.answer(id, JSON.stringify({ type: 'answer', sdp: conn.localDescription.sdp }), '');
+    })
+    .catch(function (e) {
+      if (pc === conn) stopCast('Could not connect: ' + e);
+      Cast.answer(id, '', String(e && e.message || e));
+    });
+}
+
+if (!window.RTCPeerConnection) {
+  setStatus('This projector\'s web engine is too old. Update "Android System WebView" and reopen the app.');
+}
+</script>
+</body>
+</html>

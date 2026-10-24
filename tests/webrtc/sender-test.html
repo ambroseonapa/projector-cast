@@ -1,0 +1,39 @@
+<!doctype html>
+<html><head><meta charset="utf-8"></head><body>
+<canvas id="c" width="1920" height="1080"></canvas>
+<script src="../../sender-pc/cast-core.js"></script>
+<script>
+// Fake "screen": a moving 1080p picture at 60 fps, plus stereo sound (different tone per side).
+const c = document.getElementById('c'), g = c.getContext('2d');
+let f = 0;
+(function draw() {
+  g.fillStyle = `hsl(${f % 360},70%,40%)`; g.fillRect(0, 0, 1920, 1080);
+  g.fillStyle = '#fff'; g.font = 'bold 120px sans-serif'; g.fillText('Frame ' + f, 200 + (f * 7) % 1200, 540);
+  for (let i = 0; i < 40; i++) g.fillRect((f * 13 + i * 47) % 1920, i * 27, 30, 20);
+  f++; requestAnimationFrame(draw);
+})();
+window.makeStream = function () {
+  const v = c.captureStream(60);
+  const ac = new AudioContext();
+  const merger = ac.createChannelMerger(2);
+  const l = ac.createOscillator(); l.frequency.value = 440; l.connect(merger, 0, 0);
+  const r = ac.createOscillator(); r.frequency.value = 660; r.connect(merger, 0, 1);
+  const dest = ac.createMediaStreamDestination(); dest.channelCount = 2; merger.connect(dest);
+  l.start(); r.start();
+  return new MediaStream([...v.getVideoTracks(), ...dest.stream.getAudioTracks()]);
+};
+window.runCast = async function (opts) {
+  window.log = [];
+  window.ended = null;
+  const api = {
+    sendOffer: (ip, code, offer) => window.relayOffer(JSON.stringify(offer)).then((t) => JSON.parse(t)),
+    sendStop: () => window.relayStop(),
+  };
+  window.session = new CastCore.CastSession(api, Object.assign({ ip: 'x', code: '482193', name: 'Test' }, opts), {
+    onState: (t, k) => window.log.push(k + ':' + t),
+    onStats: (t) => { window.lastStats = t; },
+    onEnded: (r) => { window.ended = r; },
+  });
+  await window.session.start(window.makeStream());
+};
+</script></body></html>

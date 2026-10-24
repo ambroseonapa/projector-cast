@@ -1,0 +1,25 @@
+{
+  "name": "projector-cast",
+  "productName": "Projector Cast",
+  "version": "1.0.0",
+  "description": "Mirror your PC screen and sound to an Android TV projector with a code.",
+  "main": "main.js",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "dist:win": "electron-builder --win portable zip --x64"
+  },
+  "build": {
+    "appId": "com.projectorcast.sender",
+    "productName": "Projector Cast",
+    "files": ["main.js", "preload.js", "cast-core.js", "renderer.js", "index.html", "style.css"],
+    "directories": { "output": "../dist/pc" },
+    "artifactName": "ProjectorCast-${version}-${arch}.${ext}",
+    "win": { "signAndEditExecutable": false },
+    "portable": { "artifactName": "ProjectorCast.exe" }
+  },
+  "devDependencies": {
+    "electron": "33.2.1",
+    "electron-builder": "25.1.8"
+  }
+}

@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'">
+<title>Projector Cast</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main>
+  <header>
+    <h1>Projector Cast</h1>
+    <p class="sub">Mirror this PC's screen and sound to your projector.</p>
+  </header>
+
+  <section class="card" id="setup">
+    <label for="code">Code shown on the projector</label>
+    <input id="code" inputmode="numeric" maxlength="6" placeholder="123456" autocomplete="off">
+
+    <label for="quality">Picture quality</label>
+    <select id="quality"></select>
+
+    <label for="content">What are you showing?</label>
+    <select id="content">
+      <option value="motion">Videos, sport, games (smoothest)</option>
+      <option value="detail">Documents, slides (sharpest text)</option>
+    </select>
+
+    <label class="check"><input type="checkbox" id="audio" checked> Send PC sound to the projector</label>
+    <p class="note" id="audioNote" hidden>Sound casting works on Windows only.</p>
+
+    <label>Screen</label>
+    <div id="screens" class="screens"></div>
+
+    <details>
+      <summary>Advanced</summary>
+      <label for="ip">Projector address (only if the code isn't found)</label>
+      <input id="ip" placeholder="e.g. 192.168.1.25" autocomplete="off">
+      <label for="codec">Video codec</label>
+      <select id="codec">
+        <option value="h264">H.264 (best for projectors)</option>
+        <option value="vp8">VP8 (try if the picture is black)</option>
+      </select>
+    </details>
+
+    <button id="start" class="primary">Start casting</button>
+  </section>
+
+  <section class="card" id="live" hidden>
+    <div class="dot" id="dot"></div>
+    <div id="state">Connecting...</div>
+    <div id="stats" class="stats"></div>
+    <p class="tip">You can minimise this window. Casting keeps running until you press Stop.</p>
+    <button id="stop" class="danger">Stop casting</button>
+  </section>
+
+  <p id="error" class="error" role="alert"></p>
+</main>
+<script src="cast-core.js"></script>
+<script src="renderer.js"></script>
+</body>
+</html>

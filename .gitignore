@@ -1,0 +1,6 @@
+node_modules/
+dist/
+receiver-android/build/
+*.keystore
+tests/jvm/out/
+tests/webrtc/out-*.png
