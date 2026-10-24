@@ -88,6 +88,16 @@ async function run(browser, opts, label, gpu) {
   assert(s.decoded > 100, 'frames decoded: ' + s.decoded);
   if (opts.quality === 'p720_60') assert(s.w === 1280 && s.h === 720, '720p setting sends 1280x720: ' + s.w + 'x' + s.h);
   assert.strictEqual(s.dropped || 0, 0, 'no dropped frames');
+  const kbpsAudio = s.audioBytes * 8 / 1000 / s.time;
+  assert(kbpsAudio > 128, 'sound sent at music quality: ' + kbpsAudio.toFixed(0) + ' kbps');
+  const deg = await sender.evaluate(() => window.session.pc.getSenders().find((x) => x.track && x.track.kind === 'video').getParameters().degradationPreference);
+  assert(!deg || deg === 'maintain-resolution', 'picture size is locked: ' + deg);
+  await receiver.evaluate(() => toggleStats());
+  await receiver.waitForTimeout(1500);
+  const panel = await receiver.evaluate(() => ({ text: document.getElementById('stats').textContent, shown: getComputedStyle(document.getElementById('stats')).display }));
+  console.log('  [' + label + '] projector stats panel:\n    ' + panel.text.split('\n').join('\n    '));
+  assert(panel.shown === 'block' && /Picture/.test(panel.text) && /Decoder/.test(panel.text) && /Sound .*stereo/.test(panel.text), 'stats panel works');
+  assert(/Size changes 0/.test(panel.text), 'no picture size changes');
   console.log(`  [${label}] freezes=${s.freezes} dropped=${s.dropped}`);
   assert((s.freezes || 0) <= 1, 'at most one freeze: ' + s.freezes);
   assert(/\d+×\d+ · \d+ fps/.test(senderStats || ''), 'sender shows live stats');
@@ -136,6 +146,8 @@ async function run(browser, opts, label, gpu) {
   console.log('PASS hidden .local addresses replaced');
   await page.close();
 
+  await run(browser, { quality: 'p720_30', content: 'motion', codec: 'h264', audio: true }, '720p30 default');
+  console.log('PASS 720p30 (new default)');
   await run(browser, { quality: 'p1080_60', content: 'motion', codec: 'h264', audio: true }, '1080p60 H264 motion');
   console.log('PASS 1080p60 / H.264 / sound');
   await run(browser, { quality: 'p1080_30', content: 'detail', codec: 'vp8', audio: true }, '1080p30 VP8 detail');

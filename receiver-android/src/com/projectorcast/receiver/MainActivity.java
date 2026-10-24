@@ -224,6 +224,12 @@ public class MainActivity extends Activity implements CastServer.Handler {
             }
             return true;
         }
+        int code = event.getKeyCode();
+        if (code == KeyEvent.KEYCODE_DPAD_CENTER || code == KeyEvent.KEYCODE_ENTER
+                || code == KeyEvent.KEYCODE_NUMPAD_ENTER || code == KeyEvent.KEYCODE_INFO) {
+            if (event.getAction() == KeyEvent.ACTION_UP) js("toggleStats()");
+            return true;
+        }
         return super.dispatchKeyEvent(event);
     }
 

@@ -16,6 +16,8 @@
   .hint { font-size: 1.9vw; color: #9fb2c4; max-width: 70vw; text-align: center; line-height: 1.5; }
   #ip { margin-top: 3vh; font-size: 1.6vw; color: #6f8396; }
   #status { margin-top: 3vh; font-size: 2vw; color: #ffd27a; min-height: 2.5vw; }
+  #stats { position: fixed; left: 2vw; bottom: 3vh; padding: 1.2vh 1.4vw; border-radius: 1vw;
+    background: rgba(0,0,0,.72); font: 1.5vw/1.5 monospace; color: #d8f0ff; white-space: pre; display: none; }
   #badge { position: fixed; top: 2vh; right: 2vw; padding: .6vh 1.2vw; border-radius: 1vw;
     background: rgba(0,0,0,.6); font-size: 1.5vw; color: #cfe6ff; display: none; }
 </style>
@@ -32,6 +34,7 @@
   <div id="status"></div>
 </div>
 <div id="badge"></div>
+<div id="stats"></div>
 
 <script>
 var pc = null;
@@ -39,7 +42,9 @@ var video = document.getElementById('video');
 var idle = document.getElementById('idle');
 var badge = document.getElementById('badge');
 var statusEl = document.getElementById('status');
-var badgeTimer = null, dropTimer = null;
+var badgeTimer = null, dropTimer = null, statsTimer = null;
+var statsOn = false, reconnects = 0, sizeChanges = 0, lastSize = '', prev = {};
+var statsEl = document.getElementById('stats');
 
 function showInfo(code, ips, name) {
   document.getElementById('code').textContent = code;
@@ -56,6 +61,7 @@ function showBadge(text, ms) {
 }
 
 function closePc() {
+  clearInterval(statsTimer);
   clearTimeout(dropTimer);
   if (pc) {
     pc.ontrack = pc.onaddstream = pc.oniceconnectionstatechange = null;
@@ -96,6 +102,57 @@ function waitForIce(conn, ms) {
   });
 }
 
+function toggleStats() {
+  statsOn = !statsOn;
+  statsEl.style.display = statsOn && pc ? 'block' : 'none';
+}
+
+function perSec(key, value, ts) {
+  var p = prev[key];
+  prev[key] = { v: value, t: ts };
+  return p && ts > p.t ? (value - p.v) * 1000 / (ts - p.t) : null;
+}
+
+function fmt(v, digits) { return v == null || isNaN(v) ? '?' : v.toFixed(digits || 0); }
+
+// What the projector itself sees: shows whether it is the Wi-Fi or the projector's chip that struggles.
+function readStats(conn) {
+  if (!conn.getStats) return;
+  conn.getStats().then(function (rep) {
+    var v = null, a = null, codecs = {};
+    rep.forEach(function (r) {
+      if (r.type === 'codec') codecs[r.id] = r;
+      if (r.type === 'inbound-rtp' && (r.kind || r.mediaType) === 'video') v = r;
+      if (r.type === 'inbound-rtp' && (r.kind || r.mediaType) === 'audio') a = r;
+    });
+    var lines = [];
+    if (v) {
+      var size = (v.frameWidth || video.videoWidth) + 'x' + (v.frameHeight || video.videoHeight);
+      if (lastSize && size !== lastSize) sizeChanges++;
+      lastSize = size;
+      var fps = perSec('vframes', v.framesDecoded, v.timestamp);
+      var vkbps = perSec('vbytes', v.bytesReceived * 8 / 1000, v.timestamp);
+      var c = codecs[v.codecId];
+      lines.push('Picture   ' + size + '  ' + fmt(fps) + ' fps  ' + fmt(vkbps == null ? null : vkbps / 1000, 1) + ' Mbps');
+      lines.push('Decoder   ' + (c ? c.mimeType.replace('video/', '') : '?') + (v.decoderImplementation ? '  ' + v.decoderImplementation : '')
+        + (v.powerEfficientDecoder === true ? '  (hardware)' : v.powerEfficientDecoder === false ? '  (SOFTWARE)' : ''));
+      lines.push('Dropped   ' + (v.framesDropped != null ? v.framesDropped : '?') + ' frames   freezes ' + (v.freezeCount != null ? v.freezeCount : '?')
+        + '   lost packets ' + (v.packetsLost != null ? v.packetsLost : '?'));
+      lines.push('Size changes ' + sizeChanges + '   connection drops ' + reconnects);
+    }
+    if (a) {
+      var akbps = perSec('abytes', a.bytesReceived * 8 / 1000, a.timestamp);
+      var conceal = perSec('aconc', a.concealedSamples || 0, a.timestamp);
+      var total = perSec('atotal', a.totalSamplesReceived || 0, a.timestamp);
+      var ac = codecs[a.codecId];
+      lines.push('Sound     ' + fmt(akbps) + ' kbps  ' + (ac && ac.channels === 2 ? 'stereo' : ac && ac.channels ? ac.channels + 'ch' : '?')
+        + '   gaps ' + (total ? fmt(100 * conceal / total, 1) : '?') + '%   lost packets ' + (a.packetsLost != null ? a.packetsLost : '?'));
+    }
+    statsEl.textContent = lines.join('\n');
+    statsEl.style.display = statsOn ? 'block' : 'none';
+  }).catch(function () {});
+}
+
 // Ask for stereo, high-bitrate sound (by default the browser negotiates mono-quality voice).
 function wantStereo(sdp) {
   var m = /a=rtpmap:(\d+) opus\/48000/i.exec(sdp);
@@ -121,12 +178,18 @@ function handleOffer(id, offerText, sender, senderIp) {
 
   offer = { type: 'offer', sdp: unhideAddresses(offer.sdp, senderIp) };
   closePc();
+  prev = {}; lastSize = '';
   setStatus('Connecting to ' + sender + '...');
   var conn = new RTCPeerConnection({ iceServers: [], bundlePolicy: 'max-bundle' });
   pc = conn;
   var stream = null;
 
   conn.ontrack = function (ev) {
+    // Small extra buffer: rides out Wi-Fi hiccups instead of cutting the sound or freezing.
+    var r = ev.receiver;
+    if (r) {
+      try { if ('jitterBufferTarget' in r) r.jitterBufferTarget = 150; else r.playoutDelayHint = 0.15; } catch (e) {}
+    }
     stream = (ev.streams && ev.streams[0]) || stream || new MediaStream();
     if (stream.getTracks().indexOf(ev.track) < 0) stream.addTrack(ev.track);
     attachStream(stream);
@@ -137,8 +200,11 @@ function handleOffer(id, offerText, sender, senderIp) {
     var st = conn.iceConnectionState;
     if (st === 'connected' || st === 'completed') {
       clearTimeout(dropTimer);
-      showBadge('Casting from ' + sender, 4000);
+      showBadge('Casting from ' + sender + '  ·  press OK for stats', 5000);
+      clearInterval(statsTimer);
+      statsTimer = setInterval(function () { readStats(conn); }, 1000);
     } else if (st === 'disconnected') {
+      reconnects++;
       showBadge('Connection weak...', 0);
       clearTimeout(dropTimer);
       dropTimer = setTimeout(function () { if (pc === conn) stopCast('Connection lost. Start casting again on the PC.'); }, 8000);

@@ -6,7 +6,8 @@
  */
 (function (global) {
   const QUALITY = {
-    p1080_60: { label: 'Full HD 1080p · 60 fps (recommended)', width: 1920, height: 1080, fps: 60, kbps: 12000 },
+    p720_30: { label: 'HD 720p · 30 fps (best for most projectors)', width: 1280, height: 720, fps: 30, kbps: 5000 },
+    p1080_60: { label: 'Full HD 1080p · 60 fps (strong PC and projector)', width: 1920, height: 1080, fps: 60, kbps: 12000 },
     p1080_30: { label: 'Full HD 1080p · 30 fps (weaker Wi-Fi)', width: 1920, height: 1080, fps: 30, kbps: 8000 },
     p720_60: { label: 'HD 720p · 60 fps (weak Wi-Fi)', width: 1280, height: 720, fps: 60, kbps: 6000 },
     p4k_30: { label: '4K · 30 fps (only for 4K projectors)', width: 3840, height: 2160, fps: 30, kbps: 25000 },
@@ -151,8 +152,6 @@
       this.stopped = false;
       this.retries = 0;
       this.statsTimer = null;
-      this.lastBytes = 0;
-      this.lastTs = 0;
     }
 
     async start(stream) {
@@ -162,7 +161,12 @@
           height: { ideal: this.q.height, max: this.q.height },
           frameRate: { ideal: this.q.fps, max: this.q.fps },
         },
-        audio: !!this.opts.audio,
+        // Voice-call processing (echo cancelling, noise suppression, auto volume) ruins music and
+        // commentary, so ask for the raw stereo sound.
+        audio: this.opts.audio ? {
+          echoCancellation: false, noiseSuppression: false, autoGainControl: false,
+          channelCount: 2, sampleRate: 48000,
+        } : false,
         systemAudio: 'include',
       });
       const v = this.stream.getVideoTracks()[0];
@@ -182,7 +186,8 @@
       const v = this.stream.getVideoTracks()[0];
       const vt = pc.addTransceiver(v, { direction: 'sendonly', streams: [this.stream] });
       preferCodec(vt, this.opts.codec);
-      for (const a of this.stream.getAudioTracks()) pc.addTransceiver(a, { direction: 'sendonly', streams: [this.stream] });
+      const audioSenders = this.stream.getAudioTracks()
+        .map((a) => pc.addTransceiver(a, { direction: 'sendonly', streams: [this.stream] }).sender);
 
       pc.addEventListener('iceconnectionstatechange', () => this.onIce(pc));
 
@@ -196,6 +201,16 @@
       if (pc !== this.pc) return;
       await pc.setRemoteDescription({ type: 'answer', sdp: tuneAnswer(unhideAddresses(answer.sdp, this.opts.ip), this.q.kbps) });
       await this.tuneSender(vt.sender);
+      for (const s of audioSenders) await this.tuneAudio(s);
+    }
+
+    async tuneAudio(sender) {
+      const p = sender.getParameters();
+      if (!p.encodings || !p.encodings.length) return;
+      p.encodings[0].maxBitrate = 256000;
+      p.encodings[0].priority = 'high';
+      p.encodings[0].networkPriority = 'high';
+      try { await sender.setParameters(p); } catch (_) { /* keep browser defaults */ }
     }
 
     async tuneSender(sender) {
@@ -209,7 +224,9 @@
       p.encodings[0].scaleResolutionDownBy = scale;
       p.encodings[0].priority = 'high';
       p.encodings[0].networkPriority = 'high';
-      p.degradationPreference = this.opts.content === 'detail' ? 'maintain-resolution' : 'maintain-framerate';
+      // Never change the picture size mid-stream: on TV chips every size change resets the hardware
+      // decoder, which shows as the picture blinking. When Wi-Fi dips, lower quality/fps instead.
+      p.degradationPreference = 'maintain-resolution';
       try {
         await sender.setParameters(p);
       } catch (e) {
@@ -242,32 +259,41 @@
 
     startStats() {
       clearInterval(this.statsTimer);
+      const prev = {};
+      const rate = (key, bytes, ts) => {
+        const p = prev[key];
+        prev[key] = { bytes, ts };
+        return p && ts > p.ts ? (bytes - p.bytes) * 8 / (ts - p.ts) : null; // kbit/s
+      };
       this.statsTimer = setInterval(async () => {
         if (!this.pc) return;
         const report = await this.pc.getStats().catch(() => null);
         if (!report) return;
+        let video = '';
+        let audio = '';
         report.forEach((r) => {
-          if (r.type !== 'outbound-rtp' || r.kind !== 'video') return;
-          let mbps = '';
-          if (this.lastTs && r.timestamp > this.lastTs) {
-            mbps = ((r.bytesSent - this.lastBytes) * 8 / (r.timestamp - this.lastTs) / 1000).toFixed(1) + ' Mbps';
+          if (r.type !== 'outbound-rtp') return;
+          const kbps = rate(r.kind, r.bytesSent, r.timestamp);
+          if (r.kind === 'video') {
+            const size = r.frameWidth ? `${r.frameWidth}×${r.frameHeight}` : '';
+            const fps = r.framesPerSecond != null ? `${Math.round(r.framesPerSecond)} fps` : '';
+            const mbps = kbps != null ? (kbps / 1000).toFixed(1) + ' Mbps' : '';
+            let limit = '';
+            if (r.qualityLimitationReason === 'bandwidth') limit = ' · Wi-Fi is limiting quality';
+            else if (r.qualityLimitationReason === 'cpu') limit = ' · PC is busy, lowering quality';
+            video = [size, fps, mbps].filter(Boolean).join(' · ') + limit;
+          } else if (r.kind === 'audio' && kbps != null) {
+            const t = this.stream && this.stream.getAudioTracks()[0];
+            const ch = t && t.getSettings ? t.getSettings().channelCount : null;
+            audio = `Sound ${Math.round(kbps)} kbps${ch === 1 ? ' mono' : ch === 2 ? ' stereo' : ''}`;
           }
-          this.lastBytes = r.bytesSent;
-          this.lastTs = r.timestamp;
-          const size = r.frameWidth ? `${r.frameWidth}×${r.frameHeight}` : '';
-          const fps = r.framesPerSecond != null ? `${Math.round(r.framesPerSecond)} fps` : '';
-          let limit = '';
-          if (r.qualityLimitationReason === 'bandwidth') limit = ' · Wi-Fi is limiting quality';
-          else if (r.qualityLimitationReason === 'cpu') limit = ' · PC is busy, lowering quality';
-          this.events.onStats([size, fps, mbps].filter(Boolean).join(' · ') + limit);
         });
+        this.events.onStats([video, audio].filter(Boolean).join('\n'));
       }, 1000);
     }
 
     closePc() {
       clearInterval(this.statsTimer);
-      this.lastBytes = 0;
-      this.lastTs = 0;
       if (this.pc) {
         const pc = this.pc;
         this.pc = null;

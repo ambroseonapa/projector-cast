@@ -1,7 +1,7 @@
 {
   "name": "projector-cast",
   "productName": "Projector Cast",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "description": "Mirror your PC screen and sound to an Android TV projector with a code.",
   "main": "main.js",
   "private": true,

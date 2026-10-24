@@ -2,7 +2,7 @@
 
 Mirror your PC's screen **and sound** to an Android TV projector over Wi-Fi. Open the app on the projector, type the 6-digit code it shows into the PC app, and press **Start casting**.
 
-- Full HD 1080p at 60 fps, 720p for weak Wi-Fi, 4K/30 for 4K projectors
+- 720p 30 fps by default (smoothest on most projectors), up to 1080p 60 fps and 4K 30 fps
 - PC sound is cast in stereo (Windows)
 - Finds the projector by its code alone, with no IP addresses or accounts
 - Works on the local network only, so nothing goes through the internet
@@ -32,6 +32,7 @@ Mirror your PC's screen **and sound** to an Android TV projector over Wi-Fi. Ope
 | "Projector not found" | Both devices must be on the same Wi-Fi network. Some routers block devices from finding each other ("AP/client isolation", common on guest networks). In that case, type the address shown at the bottom of the projector screen into **Advanced → Projector address**. |
 | Black picture on the projector | In **Advanced**, switch the codec to **VP8**. Also update **Android System WebView** on the projector from Google Play. |
 | Picture is blurry or stutters | The Wi-Fi is too slow. Pick *1080p · 30 fps* or *720p*. Use 5 GHz Wi-Fi or a network cable on the PC if you can. While casting, the PC app shows live resolution, fps and Mbps and tells you when Wi-Fi is the limit. |
+| Picture blinks, sound is choppy | Use *720p · 30 fps*. Press **OK** on the projector remote to open the stats panel. If *Dropped* or *freezes* keeps rising while *lost packets* stays near 0, the projector's chip is too slow for the setting, so lower it. If *lost packets* keeps rising, the Wi-Fi is the problem, so move closer to the router or use 5 GHz. |
 | No sound | Sound casting needs Windows. Check that *Send PC sound* is ticked and the projector volume is up. |
 | "This projector's web engine is too old" | Update **Android System WebView** (Google Play → search "Android System WebView"). |
 

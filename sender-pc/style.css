@@ -35,6 +35,6 @@ button { width: 100%; margin-top: 18px; padding: 12px; border: 0; border-radius:
 .dot { width: 14px; height: 14px; border-radius: 50%; background: var(--warn); margin: 4px auto 10px; }
 .dot.live { background: var(--ok); box-shadow: 0 0 0 6px rgba(48, 194, 107, .2); }
 #state { font-size: 18px; font-weight: 600; }
-.stats { color: var(--muted); margin-top: 6px; min-height: 1.4em; font-variant-numeric: tabular-nums; }
+.stats { color: var(--muted); margin-top: 6px; min-height: 2.8em; font-variant-numeric: tabular-nums; white-space: pre-line; }
 .error { color: #ff8a8d; min-height: 1.4em; margin-top: 12px; }
 .tip { color: var(--muted); font-size: 13px; margin: 14px 0 0; }

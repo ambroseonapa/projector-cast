@@ -58,7 +58,7 @@ async function init() {
   }
   $('code').value = store('code') || '';
   $('ip').value = store('ip') || '';
-  $('quality').value = store('quality') || 'p1080_60';
+  $('quality').value = (QUALITY[store('quality')] && store('quality')) || 'p720_30';
   $('content').value = store('content') || 'motion';
   $('codec').value = store('codec') || 'h264';
   $('audio').checked = store('audio') !== '0';
