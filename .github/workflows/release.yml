@@ -23,6 +23,8 @@ jobs:
           sudo apt-get install -y -qq aapt apksigner android-sdk-platform-23 zipalign unzip
       - name: Build projector app (APK)
         run: receiver-android/build.sh
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
       - uses: actions/upload-artifact@v4
         with:
           name: apk
@@ -52,7 +54,10 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: windows
-          path: dist/pc/ProjectorCast-Setup-*.exe
+          path: |
+            dist/pc/ProjectorCast-Setup-*.exe
+            dist/pc/ProjectorCast-Setup-*.exe.blockmap
+            dist/pc/latest.yml
 
   release:
     needs: [apk, windows]
@@ -66,6 +71,14 @@ jobs:
         with:
           path: out
           merge-multiple: true
+      - name: Remove releases built before the signing key left the repository
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for t in v1.3.0 v1.4.0 v1.5.0; do
+            gh release delete "$t" --cleanup-tag --yes --repo "$GITHUB_REPOSITORY" || true
+            gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/$t" || true
+          done
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
@@ -77,6 +90,10 @@ jobs:
             **Downloads** (under Assets below)
             - **ProjectorCast-Setup-….exe**: install on your Windows PC.
             - **ProjectorCast.apk**: install on the projector by USB the first time; after that the PC app updates it.
+
+            Installed PC apps (1.6 and later) update themselves from here.
           files: |
             out/ProjectorCast.apk
             out/ProjectorCast-Setup-*.exe
+            out/ProjectorCast-Setup-*.exe.blockmap
+            out/latest.yml

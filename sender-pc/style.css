@@ -68,3 +68,9 @@ button { width: 100%; margin-top: 18px; padding: 12px; border: 0; border-radius:
 .pick-card img { display: block; width: 100%; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 4px; background: #000; }
 .pick-card span { display: block; margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pick-card.selected { border-color: var(--accent); }
+#projBox { text-align: left; }
+#projStats { margin: 6px 0 0; padding: 8px; border-radius: 8px; background: #0e1824; color: #cfe6ff; font: 12px/1.45 Consolas, monospace;
+  white-space: pre-wrap; word-break: break-word; max-height: 220px; overflow-y: auto; }
+.update-ready { margin-bottom: 12px; display: flex; gap: 12px; align-items: center; border-color: var(--accent); }
+.update-ready span { flex: 1; }
+.update-ready button { width: auto; margin: 0; padding: 8px 14px; }

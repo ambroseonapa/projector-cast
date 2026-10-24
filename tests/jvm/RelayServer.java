@@ -26,6 +26,9 @@ public class RelayServer {
                 System.out.println("update " + b.length);
                 post("/update", "{\"bytes\":" + b.length + ",\"pk\":" + (b[0] == 'P' && b[1] == 'K') + "}");
             }
+            public String onStats() {
+                try { return post("/stats", "{}"); } catch (Exception e) { return "{\"error\":\"no stats\"}"; }
+            }
             public void onStop() {
                 System.out.println("stop");
                 try { post("/stop", "{}"); } catch (Exception ignored) { }

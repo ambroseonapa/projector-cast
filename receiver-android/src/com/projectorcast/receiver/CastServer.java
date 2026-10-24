@@ -25,6 +25,7 @@ import java.util.Map;
  *   POST /offer  (X-Cast-Code) body = SDP offer JSON -> SDP answer JSON
  *   POST /stop   (X-Cast-Code) -> {"ok":true}
  *   POST /update (X-Cast-Code) body = new APK -> {"ok":true}; Android then asks to install it
+ *   GET  /stats  (X-Cast-Code) -> what the projector sees right now, for the PC's report
  */
 public class CastServer {
 
@@ -45,6 +46,9 @@ public class CastServer {
 
         /** A newer copy of this app pushed by the PC app. */
         void onUpdate(byte[] apk) throws Exception;
+
+        /** JSON with the projector's current stats and recent events. */
+        String onStats();
     }
 
     private final String code;
@@ -149,6 +153,11 @@ public class CastServer {
             if (method.equals("OPTIONS")) { respond(out, 204, ""); return; }
             if (method.equals("GET") && path.equals("/ping")) {
                 respond(out, 200, "{\"ok\":true,\"name\":" + quote(name) + ",\"version\":" + version + "}");
+                return;
+            }
+            if (method.equals("GET") && path.equals("/stats")) {
+                if (!codeAccepted(headers.get("x-cast-code"))) { respond(out, 403, "{\"error\":\"wrong code\"}"); return; }
+                respond(out, 200, handler.onStats());
                 return;
             }
             if (!method.equals("POST")) { respond(out, 404, "{\"error\":\"not found\"}"); return; }

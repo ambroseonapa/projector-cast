@@ -15,4 +15,9 @@ contextBridge.exposeInMainWorld('cast', {
   setCaptureMethod: (method) => ipcRenderer.invoke('set-capture-method', method),
   bundledApkVersion: () => ipcRenderer.invoke('bundled-apk-version'),
   pushUpdate: (ip, code) => ipcRenderer.invoke('push-update', { ip, code }),
+  projectorStats: (ip, code) => ipcRenderer.invoke('projector-stats', { ip, code }),
+  copyText: (text) => ipcRenderer.invoke('copy-text', text),
+  appInfo: () => ipcRenderer.invoke('app-info'),
+  onUpdateReady: (cb) => ipcRenderer.on('update-ready', (_e, version) => cb(version)),
+  installUpdate: () => ipcRenderer.invoke('install-update'),
 });

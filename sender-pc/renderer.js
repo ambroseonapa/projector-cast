@@ -6,6 +6,60 @@ const { QUALITY, CastSession } = window.CastCore;
 let selectedScreen = null;
 let session = null;
 
+// ---- Report: PC and projector stats every 2 s, so a freeze can be diagnosed from text ----
+let reportTimer = null;
+let timeline = [];
+let lastProjector = null;
+let reportTarget = null;
+
+function clock() { return new Date().toTimeString().slice(0, 8); }
+
+function startReport(target) {
+  stopReport();
+  reportTarget = target;
+  timeline = [];
+  lastProjector = null;
+  $('projStats').textContent = 'Waiting for the projector...';
+  reportTimer = setInterval(async () => {
+    if (!session || !reportTarget) return;
+    const p = await window.cast.projectorStats(reportTarget.ip, reportTarget.code).catch((e) => ({ error: cleanError(e) }));
+    lastProjector = p;
+    const projText = p.error ? 'no answer: ' + p.error : (p.stats || '(no stats yet)');
+    $('projStats').textContent = p.error ? projText
+      : `${p.mode || ''}  ·  decoding: ${p.decoding || '?'}\n${projText}`;
+    timeline.push({ t: clock(), pc: $('stats').textContent.replace(/\n/g, ' · '), proj: projText.replace(/\n+/g, ' | ') });
+    if (timeline.length > 90) timeline.shift();
+  }, 2000);
+}
+
+function stopReport() {
+  clearInterval(reportTimer);
+  reportTimer = null;
+}
+
+async function copyReport() {
+  const info = await window.cast.appInfo().catch(() => ({}));
+  const s = selectedSource();
+  const p = lastProjector || {};
+  const lines = [
+    `Projector Cast report  ${new Date().toISOString()}`,
+    `PC app ${info.version || '?'}  ·  ${info.os || '?'}`,
+    `Settings: quality ${$('quality').value} · content ${$('content').value} · codec ${$('codec').value} · delay ${$('buffer').value} ms`
+      + ` · capture ${$('capture').value} · casting ${s ? s.kind + ' "' + s.name + '"' : '?'} · sound ${$('audio').checked ? 'on' : 'off'}`,
+    `Projector: app ${p.app || '?'} · ${p.device || '?'} · Android ${p.android || '?'} · ${p.webview || '?'}`,
+    `Projector mode: ${p.mode || '?'} · decoding: ${p.decoding || '?'} · ${p.casting || '?'}`,
+    '',
+    '--- Every 2 s (newest last) ---',
+    ...timeline.map((x) => `${x.t}  PC: ${x.pc}\n          Projector: ${x.proj}`),
+    '',
+    '--- Projector events ---',
+    ...((p.events || []).length ? p.events : ['(none)']),
+  ];
+  await window.cast.copyText(lines.join('\n'));
+  showNote('Report copied. Paste it into the chat with Claude.');
+}
+
+
 function store(key, value) {
   try {
     if (value === undefined) return localStorage.getItem(key);
@@ -172,6 +226,16 @@ async function init() {
   $('muteLocal').checked = store('muteLocal') !== '0';
   for (const [key, q] of Object.entries(QUALITY)) $('liveQuality').append(new Option(q.label, key));
   $('applyLive').addEventListener('click', applyLive);
+  $('copyReport').addEventListener('click', copyReport);
+  $('copyLast').addEventListener('click', copyReport);
+  window.cast.onUpdateReady((version) => {
+    $('pcUpdateText').textContent = `Projector Cast ${version} is ready. It installs when you close the app, or now:`;
+    $('pcUpdate').hidden = false;
+  });
+  $('pcUpdateNow').addEventListener('click', () => {
+    if (session) return showError('Stop casting first, then restart to update.');
+    window.cast.installUpdate();
+  });
 
   const platform = await window.cast.platform();
   if (platform !== 'win32') {
@@ -272,6 +336,8 @@ async function start() {
       onStream: (stream) => { $('preview').srcObject = new MediaStream(stream.getVideoTracks()); },
       onEnded: (reason) => {
         session = null;
+        stopReport();
+        $('copyLast').hidden = timeline.length === 0;
         $('preview').srcObject = null;
         window.cast.keepAwake(false);
         setLive(false);
@@ -280,6 +346,7 @@ async function start() {
       },
     });
     window.cast.keepAwake(true);
+    startReport({ ip: target.ip, code });
     await session.start();
   } catch (e) {
     if (session) {

@@ -50,6 +50,7 @@ public class ServerTest {
             }
             public void onStop() { stopped[0] = true; }
             public void onUpdate(byte[] b) { apk[0] = b; }
+            public String onStats() { return "{\"stats\":\"test\"}"; }
         });
         server.start();
 
@@ -98,6 +99,11 @@ public class ServerTest {
         boolean updRefused;
         try { updRefused = http("POST", "/update", "999999", fakeApk.toString())[0].equals("403"); } catch (IOException e) { updRefused = true; }
         check(updRefused && apk[0] == null, "update with wrong code is refused without reading it");
+        http("POST", "/stop", "482193", "{}"); // reset wrong-code counter
+        r = http("GET", "/stats", "482193", null);
+        check(r[0].equals("200") && r[1].contains("\"stats\""), "stats with the right code");
+        r = http("GET", "/stats", "111111", null);
+        check(r[0].equals("403"), "stats need the code");
         http("POST", "/stop", "482193", "{}"); // reset wrong-code counter
         r = http("GET", "/nothing", null, null);
         check(r[0].equals("404"), "unknown path is 404");

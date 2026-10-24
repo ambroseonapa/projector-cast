@@ -28,6 +28,11 @@ const RECEIVER = 'file://' + path.resolve(__dirname, '../../receiver-android/ass
     req.on('data', (c) => { body += c; });
     req.on('end', async () => {
       try {
+        if (req.url === '/stats') {
+          const text = await receiver.evaluate(() => document.getElementById('stats').textContent);
+          res.end(JSON.stringify({ app: 'test', mode: '2/4 Web standard', stats: text, events: ['12:00:00  offer from TEST'] }));
+          return;
+        }
         if (req.url === '/update') { updateSeen = JSON.parse(body); res.end('{}'); return; }
         if (req.url === '/stop') { await receiver.evaluate(() => stopCast('The PC stopped casting')); res.end('{}'); return; }
         const { offer, sender, ip } = JSON.parse(body);
@@ -91,6 +96,13 @@ const RECEIVER = 'file://' + path.resolve(__dirname, '../../receiver-android/ass
   const preview = await win.evaluate(() => { const v = document.getElementById('preview'); return { w: v.videoWidth, t: v.currentTime }; });
   assert(preview.w > 0 && preview.t > 1, 'PC preview plays: ' + JSON.stringify(preview));
   console.log('PASS PC preview shows what is sent');
+  await win.waitForFunction(() => /Web standard/.test(document.getElementById('projStats').textContent), null, { timeout: 10000 });
+  await win.waitForTimeout(4500);
+  await win.click('#copyReport');
+  const report = await app.evaluate(({ clipboard }) => clipboard.readText());
+  assert(/Projector Cast report/.test(report) && /PC: \d+×\d+/.test(report) && /Projector: .*Picture/.test(report) && /offer from TEST/.test(report),
+    'report has PC and projector timelines and events:\n' + report.slice(0, 600));
+  console.log(`PASS report copied: ${report.split('\n').length} lines with PC + projector stats every 2 s`);
 
   // Change quality while casting (1080p60 -> 720p30) without stopping.
   await win.click('#liveSettings summary');

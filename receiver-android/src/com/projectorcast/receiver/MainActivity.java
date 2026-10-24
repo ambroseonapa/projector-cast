@@ -33,6 +33,7 @@ import android.widget.FrameLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import org.json.JSONArray;
 import org.json.JSONObject;
 import org.webrtc.SurfaceViewRenderer;
 
@@ -151,6 +152,70 @@ public class MainActivity extends Activity implements CastServer.Handler {
         registerReceiver(installResult, new IntentFilter(INSTALL_ACTION));
     }
 
+    // ---- Event log for the PC's report ----
+
+    private final java.util.LinkedList<String> events = new java.util.LinkedList<String>();
+
+    void log(String what) {
+        String line = new java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US).format(new java.util.Date()) + "  " + what;
+        synchronized (events) {
+            events.add(line);
+            while (events.size() > 80) events.removeFirst();
+        }
+    }
+
+    private String webViewVersion() {
+        for (String pkg : new String[]{"com.google.android.webview", "com.android.webview", "com.android.chrome"}) {
+            try { return pkg + " " + getPackageManager().getPackageInfo(pkg, 0).versionName; } catch (Exception ignored) { }
+        }
+        return "?";
+    }
+
+    /** Server thread: everything useful for finding out why a cast misbehaves. */
+    @Override
+    public String onStats() {
+        final String[] text = {""};
+        final CountDownLatch done = new CountDownLatch(1);
+        ui.post(new Runnable() {
+            public void run() {
+                if (nativeCasting()) {
+                    player.readStats("report", new NativePlayer.StatsText() {
+                        public void show(String t) { text[0] = t; done.countDown(); }
+                    });
+                } else if (web != null) {
+                    web.evaluateJavascript("(document.getElementById('stats')||{}).textContent||''", new android.webkit.ValueCallback<String>() {
+                        public void onReceiveValue(String v) {
+                            try { text[0] = new JSONArray("[" + v + "]").getString(0); } catch (Exception e) { text[0] = String.valueOf(v); }
+                            done.countDown();
+                        }
+                    });
+                } else {
+                    done.countDown();
+                }
+            }
+        });
+        try { done.await(3, TimeUnit.SECONDS); } catch (InterruptedException ignored) { }
+        try {
+            JSONObject o = new JSONObject();
+            o.put("app", versionName());
+            o.put("device", Build.MANUFACTURER + " " + Build.MODEL + " (" + Build.HARDWARE + ")");
+            o.put("android", Build.VERSION.RELEASE + " / API " + Build.VERSION.SDK_INT);
+            o.put("webview", webViewVersion());
+            o.put("mode", mode + "/4 " + MODES[mode]);
+            o.put("decoding", player != null ? NativePlayer.STRATEGIES[player.strategy()] : "native player not available");
+            o.put("casting", nativeCasting() ? "native" : "web or idle");
+            o.put("stats", text[0]);
+            JSONArray ev = new JSONArray();
+            synchronized (events) {
+                for (String e : events) ev.put(e);
+            }
+            o.put("events", ev);
+            return o.toString();
+        } catch (Exception e) {
+            return "{\"error\":" + CastServer.quote(String.valueOf(e)) + "}";
+        }
+    }
+
     private static final String INSTALL_ACTION = "com.projectorcast.receiver.INSTALL_RESULT";
 
     /** Android's installer reports back here: show its confirmation screen, or say why it failed. */
@@ -179,6 +244,7 @@ public class MainActivity extends Activity implements CastServer.Handler {
     };
 
     private void updateFailed(String why) {
+        log("update failed: " + why);
         String text = "Update not installed: " + why + ". Install ProjectorCast.apk by USB instead.";
         if (nativeCasting()) showIdle(text);
         else js("stopCast(" + CastServer.quote(text) + ")");
@@ -236,7 +302,7 @@ public class MainActivity extends Activity implements CastServer.Handler {
     private final Runnable statsTick = new Runnable() {
         public void run() {
             if (!statsOn || player == null || !player.active()) return;
-            player.readStats(new NativePlayer.StatsText() {
+            player.readStats("panel", new NativePlayer.StatsText() {
                 public void show(String text) {
                     if (statsOn && text.length() > 0) {
                         statsView.setText(text);
@@ -271,6 +337,8 @@ public class MainActivity extends Activity implements CastServer.Handler {
             player.checkHealth(new NativePlayer.Health() {
                 public void result(boolean frozen, boolean neverShown) {
                     if (!frozen || !nativeCasting()) return;
+                    log("native: " + (neverShown ? "no picture" : "picture frozen") + " while video keeps arriving (decoding "
+                            + NativePlayer.STRATEGIES[player.strategy()] + ")");
                     if (autoSwitches >= NativePlayer.STRATEGIES.length - 1) {
                         showBadge("The picture keeps freezing in native mode. Press \u25c0 \u25b6 for display mode 4/4 (Web canvas).", 0);
                         ui.removeCallbacks(healthTick);
@@ -286,6 +354,7 @@ public class MainActivity extends Activity implements CastServer.Handler {
     };
 
     private void switchDecoder(int next, String why) {
+        log("switching decoding: " + why + NativePlayer.STRATEGIES[((next % 3) + 3) % 3]);
         ui.removeCallbacks(healthTick);
         player.setStrategy(next);
         prefs().edit().putInt("decoder", player.strategy()).apply();
@@ -296,14 +365,17 @@ public class MainActivity extends Activity implements CastServer.Handler {
 
     private final NativePlayer.Listener nativeEvents = new NativePlayer.Listener() {
         public void onFirstFrame() {
+            log("native: first picture shown (decoding " + NativePlayer.STRATEGIES[player.strategy()] + ")");
             web.setVisibility(View.GONE);
         }
 
         public void onConnectionWeak() {
+            log("native: connection weak");
             showBadge("Connection weak...", 0);
         }
 
         public void onConnected() {
+            log("native: connected");
             // Sound but no picture after a few seconds: say so instead of leaving the code screen up silently.
             ui.removeCallbacks(noPictureCheck);
             ui.postDelayed(noPictureCheck, 8000);
@@ -314,6 +386,7 @@ public class MainActivity extends Activity implements CastServer.Handler {
         }
 
         public void onEnded(String reason) {
+            log("native: ended - " + reason);
             showIdle(reason);
         }
     };
@@ -332,6 +405,7 @@ public class MainActivity extends Activity implements CastServer.Handler {
             next = ((next - 1 + step + 4) % 4) + 1;
         } while (next == 1 && player == null);
         boolean wasNative = mode == 1;
+        log("display mode " + mode + " -> " + next);
         mode = next;
         prefs().edit().putInt("playerMode", mode).apply();
         applyDisplayMode();
@@ -410,6 +484,7 @@ public class MainActivity extends Activity implements CastServer.Handler {
     @Override
     public String onOffer(String offerJson, String senderName, String senderIp) throws Exception {
         if (!pageReady) throw new Exception("receiver not ready yet, try again");
+        log("offer from " + senderName + " (" + senderIp + "), display mode " + mode + "/4 " + MODES[mode]);
         if (mode == 1 && player != null) return nativeOffer(offerJson, senderName, senderIp);
         int id;
         CountDownLatch latch = new CountDownLatch(1);

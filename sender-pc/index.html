@@ -13,6 +13,11 @@
     <p class="sub">Mirror this PC's screen and sound to your projector.</p>
   </header>
 
+  <div class="card update-ready" id="pcUpdate" hidden>
+    <span id="pcUpdateText"></span>
+    <button id="pcUpdateNow" class="primary" type="button">Restart now</button>
+  </div>
+
   <section class="card" id="setup">
     <label for="code">Code shown on the projector</label>
     <input id="code" inputmode="numeric" maxlength="6" placeholder="123456" autocomplete="off">
@@ -59,6 +64,7 @@
     </details>
 
     <button id="start" class="primary">Start casting</button>
+    <button id="copyLast" class="secondary" type="button" hidden>Copy the last cast's report</button>
   </section>
 
   <section class="card" id="update" hidden>
@@ -74,6 +80,11 @@
     <div id="state">Connecting...</div>
     <div id="castingWhat" class="stats"></div>
     <div id="stats" class="stats"></div>
+    <details id="projBox" open>
+      <summary>Projector (what it sees)</summary>
+      <pre id="projStats">Waiting for the projector...</pre>
+    </details>
+    <button id="copyReport" class="secondary" type="button">Copy report (paste it to Claude)</button>
     <video id="preview" muted autoplay playsinline></video>
     <p class="hint">Preview of what is being sent. If this preview flickers too, the flicker starts on the PC:
       stop, then set <b>Advanced → Capture method → Compatibility</b>. If only the projector flickers, press

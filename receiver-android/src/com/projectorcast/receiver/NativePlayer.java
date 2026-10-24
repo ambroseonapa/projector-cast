@@ -91,7 +91,6 @@ class NativePlayer {
     private Runnable dropTimer;
 
     // Stats bookkeeping
-    private final Map<String, double[]> prev = new java.util.HashMap<String, double[]>();
     private int connectionDrops;
     private int sizeChanges;
     private String lastSize = "";
@@ -168,7 +167,9 @@ class NativePlayer {
         lastRendered = -1;
         stuckSeconds = 0;
         lastSize = "";
-        prev.clear();
+        synchronized (prevs) {
+            prevs.clear();
+        }
 
         Result r = new Result();
         conn.setRemoteDescription(r, new SessionDescription(SessionDescription.Type.OFFER, SdpTools.unhideAddresses(offerSdp, senderIp)));
@@ -300,7 +301,8 @@ class NativePlayer {
         void show(String text);
     }
 
-    void readStats(final StatsText out) {
+    /** who: separate rate bookkeeping per reader (the on-screen panel and the PC's report poll). */
+    void readStats(final String who, final StatsText out) {
         PeerConnection conn;
         synchronized (this) {
             conn = pc;
@@ -308,7 +310,12 @@ class NativePlayer {
         if (conn == null) return;
         conn.getStats(new RTCStatsCollectorCallback() {
             public void onStatsDelivered(RTCStatsReport report) {
-                final String text = formatStats(report);
+                final String text;
+                synchronized (prevs) {
+                    Map<String, double[]> p = prevs.get(who);
+                    if (p == null) prevs.put(who, p = new java.util.HashMap<String, double[]>());
+                    text = formatStats(report, p);
+                }
                 ui.post(new Runnable() {
                     public void run() { out.show(text); }
                 });
@@ -316,7 +323,9 @@ class NativePlayer {
         });
     }
 
-    private double perSec(String key, Object value, double ts) {
+    private final Map<String, Map<String, double[]>> prevs = new java.util.HashMap<String, Map<String, double[]>>();
+
+    private static double perSec(Map<String, double[]> prev, String key, Object value, double ts) {
         if (!(value instanceof Number)) return Double.NaN;
         double v = ((Number) value).doubleValue();
         double[] p = prev.put(key, new double[]{v, ts});
@@ -331,7 +340,7 @@ class NativePlayer {
         return Double.isNaN(v) ? "?" : String.format(Locale.US, "%." + digits + "f", v);
     }
 
-    private String formatStats(RTCStatsReport report) {
+    private String formatStats(RTCStatsReport report, Map<String, double[]> prev) {
         StringBuilder b = new StringBuilder();
         Map<String, RTCStats> all = report.getStatsMap();
         for (RTCStats s : all.values()) {
@@ -345,21 +354,30 @@ class NativePlayer {
                 String size = num(m.get("frameWidth")) + "x" + num(m.get("frameHeight"));
                 if (lastSize.length() > 0 && !size.equals(lastSize)) sizeChanges++;
                 lastSize = size;
-                double fps = perSec("vframes", m.get("framesDecoded"), ts);
+                double fps = perSec(prev, "vframes", m.get("framesDecoded"), ts);
                 Object bytes = m.get("bytesReceived");
-                double mbps = perSec("vbytes", bytes instanceof Number ? ((Number) bytes).doubleValue() * 8 / 1e6 : null, ts);
+                double mbps = perSec(prev, "vbytes", bytes instanceof Number ? ((Number) bytes).doubleValue() * 8 / 1e6 : null, ts);
                 b.append("Player    NATIVE  \u00b7  decoding: ").append(STRATEGIES[strategy]).append("  (\u25b2\u25bc to change)\n");
                 b.append("Picture   ").append(size).append("  ").append(fmt(fps, 0)).append(" fps  ").append(fmt(mbps, 1)).append(" Mbps\n");
                 Object impl = m.get("decoderImplementation");
                 b.append("Decoder   ").append(codecName.replace("video/", "")).append(impl != null ? "  " + impl : "").append('\n');
+                FrameGate g = gate;
+                double arriving = perSec(prev, "vrecv", m.get("framesReceived"), ts);
+                double shown = perSec(prev, "vshown", g != null ? (Object) Long.valueOf(g.count) : null, ts);
+                b.append("Frames/s  arriving ").append(fmt(arriving, 0)).append("  decoded ").append(fmt(fps, 0))
+                        .append("  shown ").append(fmt(shown, 0)).append('\n');
+                b.append("Keyframes ").append(num(m.get("keyFramesDecoded"))).append("   picture requests ").append(num(m.get("pliCount")))
+                        .append("   resends ").append(num(m.get("nackCount"))).append("   freeze time ")
+                        .append(m.get("totalFreezesDuration") instanceof Number ? fmt(((Number) m.get("totalFreezesDuration")).doubleValue(), 1) + " s" : "?")
+                        .append('\n');
                 b.append("Dropped   ").append(num(m.get("framesDropped"))).append(" frames   freezes ").append(num(m.get("freezeCount")))
                         .append("   lost packets ").append(num(m.get("packetsLost"))).append('\n');
                 b.append("Size changes ").append(sizeChanges).append("   connection drops ").append(connectionDrops).append('\n');
             } else if ("audio".equals(m.get("kind"))) {
                 Object bytes = m.get("bytesReceived");
-                double kbps = perSec("abytes", bytes instanceof Number ? ((Number) bytes).doubleValue() * 8 / 1000 : null, ts);
-                double conceal = perSec("aconc", m.get("concealedSamples"), ts);
-                double total = perSec("atotal", m.get("totalSamplesReceived"), ts);
+                double kbps = perSec(prev, "abytes", bytes instanceof Number ? ((Number) bytes).doubleValue() * 8 / 1000 : null, ts);
+                double conceal = perSec(prev, "aconc", m.get("concealedSamples"), ts);
+                double total = perSec(prev, "atotal", m.get("totalSamplesReceived"), ts);
                 Object ch = codec != null ? codec.getMembers().get("channels") : null;
                 b.append("Sound     ").append(fmt(kbps, 0)).append(" kbps  ")
                         .append(ch instanceof Number && ((Number) ch).intValue() == 2 ? "stereo" : "?")

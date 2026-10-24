@@ -45,8 +45,17 @@ aapt package -f -M AndroidManifest.xml -S res -A assets -I "$SDK" -F build/unsig
 cp build/dex/classes*.dex build/apk/
 (cd build/apk && aapt add ../unsigned.apk classes*.dex $(find lib -name '*.so') >/dev/null)
 zipalign -f -p 4 build/unsigned.apk build/aligned.apk
+# Signing key: the KEYSTORE_BASE64 secret on GitHub, or release.keystore next to this script locally
+# (never committed). Every version must use the same key, or it can't update the installed app.
 KS=${KEYSTORE:-release.keystore}
 PASS=${KEYSTORE_PASS:-projectorcast}
+if [ -n "$KEYSTORE_BASE64" ]; then
+  KS=build/release.keystore
+  echo "$KEYSTORE_BASE64" | base64 -d > "$KS"
+elif [ -n "$CI" ]; then
+  echo "KEYSTORE_BASE64 secret is missing: add it under Settings > Secrets and variables > Actions" >&2
+  exit 1
+fi
 [ -f "$KS" ] || keytool -genkeypair -keystore "$KS" -storepass "$PASS" -keypass "$PASS" \
   -alias cast -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Projector Cast" >/dev/null 2>&1
 mkdir -p ../dist

@@ -26,6 +26,10 @@ New releases are built by GitHub itself (`.github/workflows/release.yml`) whenev
 
 ### Updating
 
+**PC app:** version 1.6 and later update themselves from this repository's public Releases. A new version downloads in the background. A banner offers **Restart now**; otherwise it installs the next time you close the app.
+
+**Projector app:**
+
 The PC app carries the latest projector app inside it. When you start casting to an older projector app, the PC app offers **Update the projector app**. The projector then shows Android's install screen: select **Install** with the remote and open Projector Cast again. The first time, Android may ask you to allow installs from Projector Cast. Projector apps older than version 1.4 can't always install updates this way (some projectors have no app that opens APK files), so install 1.4 by USB once. From 1.4 on, updates go through Android's own installer.
 
 ## Use
@@ -75,6 +79,7 @@ PC app (Electron)                                Projector app (Android)
 - `receiver-android/`: the projector app. A small Java HTTP/UDP server (`CastServer.java`) and a full-screen WebView page (`assets/receiver.html`) that plays the WebRTC stream. No Google libraries are needed.
 - `sender-pc/`: the PC app. `main.js` handles screen capture, Windows loopback sound, discovery and HTTP. `cast-core.js` handles the WebRTC session and tuning. `renderer.js` and `index.html` are the UI.
 - After 10 wrong codes, the projector refuses all connection attempts for 30 seconds.
+- While casting, the PC app reads `GET /stats` from the projector every 2 seconds and shows it. **Copy report** puts the last 3 minutes of PC and projector stats, plus the projector's event log, on the clipboard, for diagnosing freezes.
 
 ## Build
 
@@ -87,7 +92,7 @@ receiver-android/build.sh            # → dist/ProjectorCast.apk
 
 The build downloads the native WebRTC player (`io.getstream:stream-webrtc-android` from Maven Central) and Google's D8 compiler once into `receiver-android/.cache/`, and checks both against fixed SHA-256 sums.
 
-`receiver-android/release.keystore` signs the APK, and it is kept in this (private) repository on purpose. Every build must use the same key, or the update can't install over the installed app. If you ever make the repository public, move the key out first.
+The APK signing key is **not** in this repository. GitHub builds read it from the `KEYSTORE_BASE64` Actions secret (the keystore file, base64-encoded); local builds use `receiver-android/release.keystore`, which git ignores. Every build must use the same key, or the update can't install over the installed app, so keep a backup of it.
 
 PC app:
 

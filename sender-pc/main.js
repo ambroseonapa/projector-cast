@@ -1,11 +1,28 @@
 'use strict';
 
-const { app, BrowserWindow, ipcMain, desktopCapturer, session, powerSaveBlocker, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, desktopCapturer, session, powerSaveBlocker, shell, clipboard } = require('electron');
 const dgram = require('dgram');
 const http = require('http');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+
+// Self-update from the public GitHub Releases (only in the installed app).
+let autoUpdater = null;
+try { ({ autoUpdater } = require('electron-updater')); } catch (_) { /* running from source */ }
+
+function setupUpdates() {
+  if (!app.isPackaged || !autoUpdater) return;
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.on('update-downloaded', (info) => { if (win) win.webContents.send('update-ready', info.version); });
+  autoUpdater.on('error', () => { /* offline or no release yet: try again later */ });
+  const check = () => autoUpdater.checkForUpdates().catch(() => {});
+  check();
+  setInterval(check, 6 * 60 * 60 * 1000);
+}
+
+ipcMain.handle('install-update', () => { if (autoUpdater) autoUpdater.quitAndInstall(true, true); });
 
 const HTTP_PORT = 47800;
 const DISCOVERY_PORT = 47801;
@@ -77,6 +94,7 @@ app.whenReady().then(() => {
     }
   });
   createWindow();
+  setupUpdates();
 });
 
 app.on('window-all-closed', () => app.quit());
@@ -225,5 +243,8 @@ function request(ip, method, urlPath, code, body, timeoutMs, contentType) {
 }
 
 ipcMain.handle('ping', (_e, ip) => request(ip, 'GET', '/ping', '', null, 3000));
+ipcMain.handle('projector-stats', (_e, { ip, code }) => request(ip, 'GET', '/stats', code, null, 5000));
+ipcMain.handle('copy-text', (_e, text) => { clipboard.writeText(String(text)); return true; });
+ipcMain.handle('app-info', () => ({ version: app.getVersion(), os: `${os.type()} ${os.release()} ${os.arch()}` }));
 ipcMain.handle('send-offer', (_e, { ip, code, offer }) => request(ip, 'POST', '/offer', code, JSON.stringify(offer), 25000));
 ipcMain.handle('send-stop', (_e, { ip, code }) => request(ip, 'POST', '/stop', code, '{}', 3000).catch(() => null));
