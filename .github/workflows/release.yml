@@ -1,9 +1,11 @@
 name: Release
 
-# Push a tag like v1.3.0 (or run it by hand from the Actions tab) to build both apps
-# and publish them on the repository's Releases page.
+# Builds both apps and publishes them on the repository's Releases page, named after the
+# version in sender-pc/package.json. Runs when the `release` branch is pushed (e.g.
+# `git push origin main:release`), when a v* tag is pushed, or by hand from the Actions tab.
 on:
   push:
+    branches: [release]
     tags: ['v*']
   workflow_dispatch:
 
@@ -56,6 +58,10 @@ jobs:
     needs: [apk, windows]
     runs-on: ubuntu-24.04
     steps:
+      - uses: actions/checkout@v4
+      - name: Read version
+        id: version
+        run: echo "v=v$(node -p "require('./sender-pc/package.json').version")" >> "$GITHUB_OUTPUT"
       - uses: actions/download-artifact@v4
         with:
           path: out
@@ -63,8 +69,10 @@ jobs:
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref_type == 'tag' && github.ref_name || format('build-{0}', github.run_number) }}
-          name: Projector Cast ${{ github.ref_type == 'tag' && github.ref_name || format('build {0}', github.run_number) }}
+          tag_name: ${{ github.ref_type == 'tag' && github.ref_name || steps.version.outputs.v }}
+          target_commitish: ${{ github.sha }}
+          name: Projector Cast ${{ github.ref_type == 'tag' && github.ref_name || steps.version.outputs.v }}
+          make_latest: true
           body: |
             **Downloads** (under Assets below)
             - **ProjectorCast-Setup-….exe**: install on your Windows PC.
