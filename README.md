@@ -1,6 +1,6 @@
 # Projector Cast
 
-Wireless screen and audio mirroring from a Windows PC to an Android TV projector on the local network.
+Wireless screen and audio mirroring from a PC to an Android TV projector on the local network.
 
 - Pair with a 6-digit code shown on the projector; no accounts and no internet connection required
 - Cast the entire screen or a single window, and switch source while casting
@@ -15,10 +15,15 @@ Download from [Releases](../../releases/latest):
 
 | Device | File |
 |---|---|
-| Windows PC | `ProjectorCast-Setup-<version>.exe` |
-| Android TV / projector | `ProjectorCast.apk`, installed once from a USB drive. Later versions are installed from the PC app. |
+| Windows 10/11 | `ProjectorCast-Setup-<version>.exe` |
+| macOS (Apple silicon / Intel) | `ProjectorCast-<version>-mac-arm64.dmg` / `-mac-x64.dmg` |
+| Linux | `ProjectorCast-<version>-linux-x86_64.AppImage` |
+| Android TV, projector, TV box, tablet (Android 5+) | `ProjectorCast.apk`, installed once from a USB drive. Later versions are installed from the PC app. |
 
-On first launch, allow Projector Cast through Windows Firewall on private networks.
+- **Windows:** allow Projector Cast through Windows Firewall on private networks on first launch. Updates install from the app.
+- **macOS:** the app is not signed. Open it with right-click → **Open** the first time, and allow it under System Settings → Privacy & Security → Screen Recording. Audio casting is not available on macOS; new versions are downloaded from the link the app shows.
+- **Linux:** make the AppImage executable. Audio casting is not available on Linux.
+- **Android:** the native player needs Android 7 or later; older devices use the web player. ARM and x86 devices are supported.
 
 ## Usage
 
@@ -33,6 +38,8 @@ Projector remote:
 | ◀ ▶ | Display mode: 1 Native (default), 2 Web, 3 Web (GPU layer), 4 Web (canvas) |
 | ▲ ▼ | Native decoder: hardware, hardware (buffered), software |
 | Back ×2 | Exit |
+
+On touch devices: tap to show or hide status, swipe left or right to change display mode.
 
 ## Troubleshooting
 

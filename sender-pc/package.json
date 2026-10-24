@@ -1,13 +1,15 @@
 {
   "name": "projector-cast",
   "productName": "Projector Cast",
-  "version": "1.10.0",
+  "version": "1.11.0",
   "description": "Screen and audio mirroring from Windows to Android TV projectors.",
   "main": "main.js",
   "private": true,
   "scripts": {
     "start": "electron .",
-    "dist:win": "electron-builder --win nsis --x64 --publish never"
+    "dist:win": "electron-builder --win nsis --x64 --publish never",
+    "dist:mac": "electron-builder --mac --publish never",
+    "dist:linux": "electron-builder --linux AppImage --x64 --publish never"
   },
   "build": {
     "appId": "com.projectorcast.sender",
@@ -54,6 +56,37 @@
       "owner": "ambroseonapa",
       "repo": "projector-cast",
       "releaseType": "release"
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
+      ],
+      "identity": null,
+      "category": "public.app-category.utilities",
+      "artifactName": "ProjectorCast-${version}-mac-${arch}.${ext}",
+      "extendInfo": {
+        "NSScreenCaptureUsageDescription": "Projector Cast captures the screen to show it on the projector."
+      }
+    },
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "category": "Utility",
+      "artifactName": "ProjectorCast-${version}-linux-${arch}.${ext}"
     }
   },
   "devDependencies": {

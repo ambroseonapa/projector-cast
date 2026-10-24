@@ -213,6 +213,19 @@ async function run(browser, opts, label, gpu) {
     });
     assert.strictEqual(after, before, 'still source leaves the cap alone: ' + before + ' -> ' + after);
     console.log('PASS a still source does not lower the frame rate');
+    // Capped low (11 fps) and keeping up: the cap must still be able to rise again.
+    const raised = await sender.evaluate(async () => {
+      const s = window.session;
+      Object.assign(s, { fpsCap: 11, raiseWait: 1, keptUpSince: 0, samples: [] });
+      for (let i = 0; i < 6; i++) {
+        s.lastSentFps = 11;
+        await s.adaptToProjector(11);
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      return s.fpsCap;
+    });
+    assert(raised > 11 || raised === 0, 'cap rises from 11 fps: ' + raised);
+    console.log('PASS a low cap rises again once the projector keeps up (11 -> ' + raised + ' fps)');
     // Quality changes apply without a new connection.
     const pcBefore = await receiver.evaluate(() => { window.__pc = pc; return true; });
     await sender.evaluate(() => window.session.update({ quality: 'p720_30', buffer: 150 }));

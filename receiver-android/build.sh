@@ -30,8 +30,8 @@ fetch $D8JAR 4733945987ee0a840fafc34080b135259e01678412e07212b23f706334290294 \
 
 rm -rf build && mkdir -p build/gen build/classes build/dex build/webrtc build/apk/lib
 unzip -q -o "$CACHE/$WEBRTC" classes.jar 'jni/*' -d build/webrtc
-# ARM only: what Android TV boxes and projectors use (skips ~25 MB of x86 code).
-for abi in armeabi-v7a arm64-v8a; do cp -r build/webrtc/jni/$abi build/apk/lib/; done
+# ARM for most TV devices, x86 for Intel-based boxes and emulators.
+for abi in armeabi-v7a arm64-v8a x86 x86_64; do cp -r build/webrtc/jni/$abi build/apk/lib/; done
 
 aapt package -f -m -J build/gen -M AndroidManifest.xml -S res -I "$SDK"
 javac -Xlint:-options -source 8 -target 8 -bootclasspath "$SDK" -cp build/webrtc/classes.jar \

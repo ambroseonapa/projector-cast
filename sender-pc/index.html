@@ -31,6 +31,7 @@
     <label class="check"><input type="checkbox" id="audio" checked> Send sound</label>
     <label class="check"><input type="checkbox" id="muteLocal" checked> Mute this PC while casting</label>
     <p class="note" id="audioNote" hidden>Sound is available on Windows only.</p>
+    <p class="note" id="macNote" hidden>On macOS, allow Projector Cast in System Settings › Privacy &amp; Security › Screen Recording, then reopen it.</p>
 
     <details>
       <summary>Advanced</summary>
@@ -104,6 +105,7 @@
   <p id="pcUpdate" class="update-line" hidden>
     <span id="pcUpdateText"></span>
     <button id="pcUpdateNow" class="link" type="button" hidden>Update now</button>
+    <button id="pcDownload" class="link" type="button" hidden>Download</button>
   </p>
 </main>
 <script src="cast-core.js"></script>

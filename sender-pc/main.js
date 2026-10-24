@@ -15,12 +15,19 @@ function sendUpdateStatus(status) {
   if (win && !win.isDestroyed()) win.webContents.send('update-status', status);
 }
 
+const RELEASES_URL = 'https://github.com/ambroseonapa/projector-cast/releases/latest';
+
 function setupUpdates() {
   if (!app.isPackaged || !autoUpdater) return;
+  // macOS only installs signed updates; this build is unsigned, so point to the download instead.
+  const manual = process.platform === 'darwin';
   let version = '';
-  autoUpdater.autoDownload = true;
-  autoUpdater.autoInstallOnAppQuit = true;
-  autoUpdater.on('update-available', (info) => { version = info.version; sendUpdateStatus({ state: 'downloading', version }); });
+  autoUpdater.autoDownload = !manual;
+  autoUpdater.autoInstallOnAppQuit = !manual;
+  autoUpdater.on('update-available', (info) => {
+    version = info.version;
+    sendUpdateStatus({ state: manual ? 'available' : 'downloading', version });
+  });
   autoUpdater.on('download-progress', (p) => sendUpdateStatus({ state: 'downloading', version, percent: p.percent }));
   autoUpdater.on('update-downloaded', (info) => sendUpdateStatus({ state: 'ready', version: info.version }));
   autoUpdater.on('error', () => { /* offline or no release: retried later */ });
@@ -28,6 +35,8 @@ function setupUpdates() {
   check();
   setInterval(check, 60 * 60 * 1000);
 }
+
+ipcMain.handle('open-releases', () => shell.openExternal(RELEASES_URL));
 
 ipcMain.handle('install-update', () => {
   if (!autoUpdater) return;

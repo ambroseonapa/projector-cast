@@ -319,12 +319,13 @@
       if (this.samples.length < 3) return;
       const decoded = this.samples.reduce((a, x) => a + x.decoded, 0) / 3;
       const sent = this.samples.reduce((a, x) => a + x.sent, 0) / 3;
-      // A still or paused source sends few frames; that says nothing about the projector.
-      if (sent < 12) {
+      const cap = this.fpsCap || this.q.fps;
+      // A still or paused source sends few frames; that says nothing about the projector. (Compare
+      // with the cap too: once capped low, the PC never sends more than the cap.)
+      if (sent < Math.min(12, cap * 0.85)) {
         this.keptUpSince = 0;
         return;
       }
-      const cap = this.fpsCap || this.q.fps;
       this.raiseWait = this.raiseWait || 10000;
       let next = cap;
       if (decoded < sent * 0.88) {

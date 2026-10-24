@@ -265,6 +265,10 @@ function onUpdateStatus(st) {
     $('pcUpdateText').textContent = `Update ${st.version} is ready.`;
     $('pcUpdateNow').hidden = false;
     line.hidden = false;
+  } else if (st.state === 'available') {
+    $('pcUpdateText').textContent = `Version ${st.version} is available.`;
+    $('pcDownload').hidden = false;
+    line.hidden = false;
   } else if (st.state === 'installing') {
     $('pcUpdateText').textContent = 'Installing update…';
     $('pcUpdateNow').hidden = true;
@@ -301,7 +305,9 @@ async function init() {
     window.cast.setCaptureMethod($('capture').value);
   });
 
-  if (await window.cast.platform() !== 'win32') {
+  const platform = await window.cast.platform();
+  if (platform === 'darwin') $('macNote').hidden = false;
+  if (platform !== 'win32') {
     $('audioNote').hidden = false;
     for (const id of ['audio', 'muteLocal']) {
       $(id).checked = false;
@@ -313,6 +319,7 @@ async function init() {
   $('copyReport').addEventListener('click', copyReport);
   $('copyLast').addEventListener('click', copyReport);
   $('pcUpdateNow').addEventListener('click', installUpdate);
+  $('pcDownload').addEventListener('click', () => window.cast.openReleases());
   window.cast.onUpdateStatus(onUpdateStatus);
 
   $('code').addEventListener('input', () => { $('code').value = $('code').value.replace(/\D/g, '').slice(0, 6); });

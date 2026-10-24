@@ -1,6 +1,6 @@
 name: Release
 
-# Builds both apps and publishes a release named after the version in sender-pc/package.json.
+# Builds the apps and publishes a release named after the version in sender-pc/package.json.
 on:
   push:
     branches: [release]
@@ -19,7 +19,7 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq aapt apksigner android-sdk-platform-23 zipalign unzip
-      - name: Build projector app (APK)
+      - name: Build projector app
         run: receiver-android/build.sh
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
@@ -36,15 +36,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
-        with:
-          name: apk
-          path: dist
+        with: { name: apk, path: dist }
       - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: sender-pc/package-lock.json
-      - name: Build PC app (Windows installer, bundles the APK)
+        with: { node-version: 22, cache: npm, cache-dependency-path: sender-pc/package-lock.json }
+      - name: Build Windows installer
         working-directory: sender-pc
         run: |
           npm ci
@@ -57,8 +52,55 @@ jobs:
             dist/pc/ProjectorCast-Setup-*.exe.blockmap
             dist/pc/latest.yml
 
+  mac:
+    needs: apk
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { name: apk, path: dist }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm, cache-dependency-path: sender-pc/package-lock.json }
+      - name: Build macOS app (unsigned)
+        working-directory: sender-pc
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: |
+          npm ci
+          npx electron-builder --mac --publish never
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mac
+          path: |
+            dist/pc/*.dmg
+            dist/pc/*-mac-*.zip
+            dist/pc/latest-mac.yml
+
+  linux:
+    needs: apk
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { name: apk, path: dist }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm, cache-dependency-path: sender-pc/package-lock.json }
+      - name: Build Linux AppImage
+        working-directory: sender-pc
+        run: |
+          npm ci
+          npx electron-builder --linux AppImage --x64 --publish never
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: |
+            dist/pc/*.AppImage
+            dist/pc/latest-linux.yml
+
   release:
-    needs: [apk, windows]
+    needs: [apk, windows, mac, linux]
+    # The Windows build is required; a failed macOS or Linux build doesn't block the release.
+    if: ${{ !cancelled() && needs.apk.result == 'success' && needs.windows.result == 'success' }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -76,11 +118,19 @@ jobs:
           target_commitish: ${{ github.sha }}
           name: Projector Cast ${{ github.ref_type == 'tag' && github.ref_name || steps.version.outputs.v }}
           make_latest: true
+          fail_on_unmatched_files: false
           body: |
             - `ProjectorCast-Setup-*.exe`: Windows installer
+            - `ProjectorCast-*-mac-arm64.dmg` / `-mac-x64.dmg`: macOS (Apple silicon / Intel)
+            - `ProjectorCast-*-linux-x86_64.AppImage`: Linux
             - `ProjectorCast.apk`: Android TV app (first install only; later updates come from the PC app)
           files: |
             out/ProjectorCast.apk
             out/ProjectorCast-Setup-*.exe
             out/ProjectorCast-Setup-*.exe.blockmap
             out/latest.yml
+            out/*.dmg
+            out/*-mac-*.zip
+            out/latest-mac.yml
+            out/*.AppImage
+            out/latest-linux.yml

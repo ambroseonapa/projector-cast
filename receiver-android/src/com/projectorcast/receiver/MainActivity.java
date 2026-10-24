@@ -20,7 +20,9 @@ import android.os.Looper;
 import android.os.SystemClock;
 import android.util.TypedValue;
 import android.view.Gravity;
+import android.view.GestureDetector;
 import android.view.KeyEvent;
+import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowManager;
@@ -90,7 +92,8 @@ public class MainActivity extends Activity implements CastServer.Handler {
         root.setBackgroundColor(Color.BLACK);
 
         // Native player surface sits underneath; the WebView (code screen, web modes) covers it until frames arrive.
-        if (NativePlayer.load(this)) {
+        // The native player needs Android 7+; older devices use the WebView player.
+        if (Build.VERSION.SDK_INT >= 24 && NativePlayer.load(this)) {
             try {
                 surface = new SurfaceViewRenderer(this);
                 root.addView(surface, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
@@ -639,6 +642,45 @@ public class MainActivity extends Activity implements CastServer.Handler {
         if (hasFocus) hideSystemUi();
     }
 
+    // Touch devices without a remote: tap = status, swipe left/right = display mode.
+    private GestureDetector gestures;
+
+    @Override
+    public boolean dispatchTouchEvent(MotionEvent ev) {
+        if (gestures == null) {
+            gestures = new GestureDetector(this, new GestureDetector.SimpleOnGestureListener() {
+                @Override
+                public boolean onDown(MotionEvent e) { return true; }
+
+                @Override
+                public boolean onSingleTapConfirmed(MotionEvent e) {
+                    toggleStatus();
+                    return true;
+                }
+
+                @Override
+                public boolean onFling(MotionEvent a, MotionEvent b, float vx, float vy) {
+                    if (a == null || Math.abs(vx) < Math.abs(vy) || Math.abs(b.getX() - a.getX()) < 120) return false;
+                    cycleMode(vx < 0 ? 1 : -1);
+                    return true;
+                }
+            });
+        }
+        gestures.onTouchEvent(ev);
+        return true;
+    }
+
+    private void toggleStatus() {
+        if (nativeCasting()) {
+            statsOn = !statsOn;
+            statsView.setVisibility(View.GONE);
+            ui.removeCallbacks(statsTick);
+            if (statsOn) ui.post(statsTick);
+        } else {
+            js("toggleStats()");
+        }
+    }
+
     @Override
     public boolean dispatchKeyEvent(KeyEvent event) {
         if (event.getKeyCode() == KeyEvent.KEYCODE_BACK) {
@@ -655,16 +697,7 @@ public class MainActivity extends Activity implements CastServer.Handler {
         int code = event.getKeyCode();
         if (code == KeyEvent.KEYCODE_DPAD_CENTER || code == KeyEvent.KEYCODE_ENTER
                 || code == KeyEvent.KEYCODE_NUMPAD_ENTER || code == KeyEvent.KEYCODE_INFO) {
-            if (event.getAction() == KeyEvent.ACTION_UP) {
-                if (nativeCasting()) {
-                    statsOn = !statsOn;
-                    statsView.setVisibility(View.GONE);
-                    ui.removeCallbacks(statsTick);
-                    if (statsOn) ui.post(statsTick);
-                } else {
-                    js("toggleStats()");
-                }
-            }
+            if (event.getAction() == KeyEvent.ACTION_UP) toggleStatus();
             return true;
         }
         if ((code == KeyEvent.KEYCODE_DPAD_UP || code == KeyEvent.KEYCODE_DPAD_DOWN) && mode == 1 && player != null) {
