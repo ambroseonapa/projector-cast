@@ -7,22 +7,37 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-// Self-update from the public GitHub Releases (only in the installed app).
+// Updates from GitHub Releases (installed app only).
 let autoUpdater = null;
 try { ({ autoUpdater } = require('electron-updater')); } catch (_) { /* running from source */ }
 
-function setupUpdates() {
-  if (!app.isPackaged || !autoUpdater) return;
-  autoUpdater.autoDownload = true;
-  autoUpdater.autoInstallOnAppQuit = true;
-  autoUpdater.on('update-downloaded', (info) => { if (win) win.webContents.send('update-ready', info.version); });
-  autoUpdater.on('error', () => { /* offline or no release yet: try again later */ });
-  const check = () => autoUpdater.checkForUpdates().catch(() => {});
-  check();
-  setInterval(check, 6 * 60 * 60 * 1000);
+function sendUpdateStatus(status) {
+  if (win && !win.isDestroyed()) win.webContents.send('update-status', status);
 }
 
-ipcMain.handle('install-update', () => { if (autoUpdater) autoUpdater.quitAndInstall(true, true); });
+function setupUpdates() {
+  if (!app.isPackaged || !autoUpdater) return;
+  let version = '';
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.on('update-available', (info) => { version = info.version; sendUpdateStatus({ state: 'downloading', version }); });
+  autoUpdater.on('download-progress', (p) => sendUpdateStatus({ state: 'downloading', version, percent: p.percent }));
+  autoUpdater.on('update-downloaded', (info) => sendUpdateStatus({ state: 'ready', version: info.version }));
+  autoUpdater.on('error', () => { /* offline or no release: retried later */ });
+  const check = () => autoUpdater.checkForUpdates().catch(() => {});
+  check();
+  setInterval(check, 60 * 60 * 1000);
+}
+
+ipcMain.handle('install-update', () => {
+  if (!autoUpdater) return;
+  // Close the window first: with it open the installer can't replace the app or start it again.
+  setImmediate(() => {
+    app.removeAllListeners('window-all-closed');
+    BrowserWindow.getAllWindows().forEach((w) => w.destroy());
+    autoUpdater.quitAndInstall(true, true);
+  });
+});
 
 const HTTP_PORT = 47800;
 const DISCOVERY_PORT = 47801;
@@ -48,8 +63,7 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
-      // Keep encoding at full speed when the window is minimised or behind other windows.
-      backgroundThrottling: false,
+      backgroundThrottling: false, // keep encoding at full speed while minimised
     },
   });
   win.loadFile(path.join(__dirname, 'index.html'));
@@ -59,35 +73,35 @@ function createWindow() {
   });
 }
 
-// Settings that must be applied before the app starts (changing them restarts the app).
+// Settings applied at start-up; changing them restarts the app.
 const settingsFile = path.join(app.getPath('userData'), 'settings.json');
 function readSettings() {
   try { return JSON.parse(fs.readFileSync(settingsFile, 'utf8')); } catch (_) { return {}; }
 }
 const settings = readSettings();
 
-// Use real LAN addresses in WebRTC instead of random .local names; both sides are on the same network.
+// Use real LAN addresses in WebRTC instead of .local names.
 const disabledFeatures = ['WebRtcHideLocalIpsWithMdns'];
-// "Compatibility" capture: the whole screen uses the older desktop-duplication path instead of Windows
-// Graphics Capture (fixes black/flashing frames from hardware video overlays). Windows always keep
-// Graphics Capture: the old window path can't see video a browser draws with the graphics card.
+// Compatibility capture: desktop duplication instead of Windows Graphics Capture for whole screens
+// (avoids black frames from hardware video overlays). Windows always use Graphics Capture, since the
+// older window capturer cannot see GPU-rendered browser video.
 if (settings.captureMethod === 'compat') disabledFeatures.push('AllowWgcScreenCapturer', 'AllowWgcDesktopCapturer');
 app.commandLine.appendSwitch('disable-features', disabledFeatures.join(','));
 app.commandLine.appendSwitch('disable-renderer-backgrounding');
 app.commandLine.appendSwitch('disable-background-timer-throttling');
 
 app.whenReady().then(() => {
-  // getDisplayMedia() in the page lands here: hand back the chosen screen, plus system sound on Windows.
+  // getDisplayMedia() requests: return the chosen source, plus system sound on Windows.
   session.defaultSession.setDisplayMediaRequestHandler(async (request, callback) => {
     try {
       const sources = await desktopCapturer.getSources({ types: ['screen', 'window'] });
-      // Never fall back to the whole screen when a window was picked: that would show everything on the PC.
+      // A missing window must not fall back to the whole screen.
       const source = sources.find((s) => s.id === chosenScreenId)
         || (chosenName && sources.find((s) => s.name === chosenName && s.id.split(':')[0] === String(chosenScreenId).split(':')[0]))
         || (!chosenScreenId && sources.find((s) => s.id.startsWith('screen:')));
       if (!source) return callback({});
       const streams = { video: source };
-      // loopbackWithMute: the sound plays on the projector only, not also on the PC's speakers.
+      // loopbackWithMute plays the sound on the projector only.
       if (wantAudio && request.audioRequested && process.platform === 'win32') streams.audio = muteLocal ? 'loopbackWithMute' : 'loopback';
       callback(streams);
     } catch (e) {
@@ -100,17 +114,46 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => app.quit());
 
+/**
+ * Splits a window title into application, page title and extra detail, e.g.
+ * "Song - YouTube and 10 more pages - Work - Microsoft Edge" -> Microsoft Edge / "Song - YouTube" / "+10 tabs · Work".
+ */
+function describeWindow(name) {
+  const parts = name.split(/ [-\u2013\u2014] /);
+  const appName = parts.length > 1 ? parts.pop() : '';
+  let title = parts.join(' - ') || name;
+  const details = [];
+  const tabs = /^(.*) and (\d+) more (?:pages|tabs)(?: - (.+))?$/.exec(title);
+  if (tabs) {
+    title = tabs[1];
+    details.push(`+${tabs[2]} tabs`);
+    if (tabs[3]) details.push(tabs[3]);
+  }
+  return { app: appName || 'Other', title: appName ? title : name, detail: details.join(' · ') };
+}
+
 ipcMain.handle('list-screens', async () => {
-  const sources = await desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 240, height: 135 } });
+  const sources = await desktopCapturer.getSources({
+    types: ['screen', 'window'], thumbnailSize: { width: 320, height: 180 }, fetchWindowIcons: true,
+  });
   const ownTitle = win ? win.getTitle() : 'Projector Cast';
+  const screens = sources.filter((s) => s.id.startsWith('screen:'));
   return sources
     .filter((s) => !(s.id.startsWith('window:') && (s.name === ownTitle || !s.name)))
-    .map((s, i) => ({
-      id: s.id,
-      kind: s.id.startsWith('screen:') ? 'screen' : 'window',
-      name: s.name || `Screen ${i + 1}`,
-      thumb: s.thumbnail.toDataURL(),
-    }));
+    .map((s) => {
+      const isScreen = s.id.startsWith('screen:');
+      const info = isScreen
+        ? { app: '', title: screens.length > 1 ? `Screen ${screens.indexOf(s) + 1}` : 'Entire screen', detail: '' }
+        : describeWindow(s.name);
+      return {
+        id: s.id,
+        kind: isScreen ? 'screen' : 'window',
+        name: s.name,
+        thumb: s.thumbnail.toDataURL(),
+        icon: s.appIcon && !s.appIcon.isEmpty() ? s.appIcon.resize({ width: 32 }).toDataURL() : null,
+        ...info,
+      };
+    });
 });
 
 ipcMain.handle('get-settings', () => ({ captureMethod: settings.captureMethod || 'auto' }));
@@ -119,14 +162,11 @@ ipcMain.handle('set-capture-method', (_e, method) => {
   const next = { ...readSettings(), captureMethod: method === 'compat' ? 'compat' : 'auto' };
   fs.mkdirSync(path.dirname(settingsFile), { recursive: true });
   fs.writeFileSync(settingsFile, JSON.stringify(next));
-  // The portable .exe unpacks itself to a temp folder; restart the .exe itself, not the unpacked copy.
-  if (process.env.PORTABLE_EXECUTABLE_FILE) app.relaunch({ execPath: process.env.PORTABLE_EXECUTABLE_FILE, args: [] });
-  else app.relaunch();
+  app.relaunch();
   app.exit(0);
 });
 
-// The projector app ships inside this PC app, so updating the PC app is enough: it pushes the
-// newer projector app over the network when it connects.
+// The projector APK ships with this app and is pushed to older projector apps on connect.
 function bundledApk() {
   const dir = app.isPackaged ? process.resourcesPath : path.join(__dirname, '..', 'dist');
   const file = path.join(dir, 'ProjectorCast.apk');

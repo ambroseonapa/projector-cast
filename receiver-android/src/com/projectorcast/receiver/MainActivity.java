@@ -56,8 +56,8 @@ public class MainActivity extends Activity implements CastServer.Handler {
 
     private static final long ANSWER_TIMEOUT_SEC = 20;
 
-    /** Display modes, switched with the remote's left/right arrows. 1 plays natively; 2-4 use the WebView. */
-    private static final String[] MODES = {"", "Native (recommended)", "Web standard", "Web GPU layer", "Web canvas"};
+    /** Display modes (left/right on the remote): 1 is the native player, 2-4 use the WebView. */
+    private static final String[] MODES = {"", "Native", "Web", "Web (GPU layer)", "Web (canvas)"};
 
     private final Handler ui = new Handler(Looper.getMainLooper());
     private final Map<Integer, String[]> answers = new HashMap<Integer, String[]>();
@@ -145,7 +145,7 @@ public class MainActivity extends Activity implements CastServer.Handler {
         try {
             server.start();
         } catch (Exception e) {
-            Toast.makeText(this, "Could not open network port: " + e.getMessage(), Toast.LENGTH_LONG).show();
+            Toast.makeText(this, "Network port unavailable: " + e.getMessage(), Toast.LENGTH_LONG).show();
         }
 
         ui.postDelayed(ipWatcher, 3000);
@@ -171,7 +171,7 @@ public class MainActivity extends Activity implements CastServer.Handler {
         return "?";
     }
 
-    /** Server thread: everything useful for finding out why a cast misbehaves. */
+    /** Server thread. Diagnostics for the PC's report. */
     @Override
     public String onStats() {
         final String[] text = {""};
@@ -218,7 +218,7 @@ public class MainActivity extends Activity implements CastServer.Handler {
 
     private static final String INSTALL_ACTION = "com.projectorcast.receiver.INSTALL_RESULT";
 
-    /** Android's installer reports back here: show its confirmation screen, or say why it failed. */
+    /** Install session result: show the confirmation screen or the error. */
     private final BroadcastReceiver installResult = new BroadcastReceiver() {
         @Override
         public void onReceive(Context c, Intent intent) {
@@ -245,13 +245,13 @@ public class MainActivity extends Activity implements CastServer.Handler {
 
     private void updateFailed(String why) {
         log("update failed: " + why);
-        String text = "Update not installed: " + why + ". Install ProjectorCast.apk by USB instead.";
+        String text = "Update failed: " + why + ".";
         if (nativeCasting()) showIdle(text);
         else js("stopCast(" + CastServer.quote(text) + ")");
         Toast.makeText(this, text, Toast.LENGTH_LONG).show();
     }
 
-    /** Re-shows the address if the projector changes Wi-Fi network. */
+    /** Refreshes the displayed address when the network changes. */
     private final Runnable ipWatcher = new Runnable() {
         public void run() {
             String ips = localIps();
@@ -318,7 +318,7 @@ public class MainActivity extends Activity implements CastServer.Handler {
         return player != null && player.active();
     }
 
-    /** Back to the code screen (native sessions). */
+    /** Returns to the code screen after a native session. */
     private void showIdle(String reason) {
         if (player != null) player.closeSession();
         if (surface != null) surface.setVisibility(View.GONE);
@@ -330,7 +330,7 @@ public class MainActivity extends Activity implements CastServer.Handler {
 
     private int autoSwitches;
 
-    /** Every second while casting natively: if the picture froze, move to the next way of decoding. */
+    /** Runs every second during native playback; switches decoder setup on a freeze. */
     private final Runnable healthTick = new Runnable() {
         public void run() {
             if (!nativeCasting()) return;
@@ -340,13 +340,12 @@ public class MainActivity extends Activity implements CastServer.Handler {
                     log("native: " + (neverShown ? "no picture" : "picture frozen") + " while video keeps arriving (decoding "
                             + NativePlayer.STRATEGIES[player.strategy()] + ")");
                     if (autoSwitches >= NativePlayer.STRATEGIES.length - 1) {
-                        showBadge("The picture keeps freezing in native mode. Press \u25c0 \u25b6 for display mode 4/4 (Web canvas).", 0);
+                        showBadge("Playback keeps stalling. Try display mode 4 (\u25c0 \u25b6).", 0);
                         ui.removeCallbacks(healthTick);
                         return;
                     }
                     autoSwitches++;
-                    switchDecoder(player.strategy() + 1, (neverShown ? "No picture" : "Picture froze")
-                            + " \u2014 trying decoding: ");
+                    switchDecoder(player.strategy() + 1, "Switching decoder: ");
                 }
             });
             ui.postDelayed(this, 1000);
@@ -358,7 +357,7 @@ public class MainActivity extends Activity implements CastServer.Handler {
         ui.removeCallbacks(healthTick);
         player.setStrategy(next);
         prefs().edit().putInt("decoder", player.strategy()).apply();
-        String text = why + NativePlayer.STRATEGIES[player.strategy()] + ". Reconnecting...";
+        String text = why + NativePlayer.STRATEGIES[player.strategy()] + "\u2026";
         showIdle(text);
         showBadge(text, 6000);
     }
@@ -381,8 +380,7 @@ public class MainActivity extends Activity implements CastServer.Handler {
             ui.postDelayed(noPictureCheck, 8000);
             ui.removeCallbacks(healthTick);
             ui.postDelayed(healthTick, 2000);
-            showBadge("Casting from " + sender + "  \u00b7  OK: stats  \u00b7  \u25c0 \u25b6: display mode " + mode + "/4"
-                    + "  \u00b7  \u25b2\u25bc: decoding (" + NativePlayer.STRATEGIES[player.strategy()] + ")", 6000);
+            showBadge(sender + "  \u00b7  OK: status  \u00b7  \u25c0 \u25b6: display mode", 4000);
         }
 
         public void onEnded(String reason) {
@@ -394,7 +392,7 @@ public class MainActivity extends Activity implements CastServer.Handler {
     private final Runnable noPictureCheck = new Runnable() {
         public void run() {
             if (nativeCasting() && !player.hasPicture()) {
-                showBadge("No picture from the native player yet. Press \u25c0 \u25b6 to try another display mode.", 0);
+                showBadge("No picture. Try another display mode (\u25c0 \u25b6).", 0);
             }
         }
     };
@@ -412,8 +410,8 @@ public class MainActivity extends Activity implements CastServer.Handler {
         String label = "Display mode " + mode + "/4: " + MODES[mode];
         if (wasNative != (mode == 1)) {
             // Switching between the native and the web player needs a new connection; the PC reconnects by itself.
-            if (nativeCasting()) showIdle(label + ". Reconnecting...");
-            else js("if (pc) stopCast(" + CastServer.quote(label + ". Reconnecting...") + ")");
+            if (nativeCasting()) showIdle(label + "\u2026");
+            else js("if (pc) stopCast(" + CastServer.quote(label + "\u2026") + ")");
         }
         showBadge(label + "   (\u25c0 \u25b6 to change)", 4000);
         pushInfo();
@@ -431,7 +429,7 @@ public class MainActivity extends Activity implements CastServer.Handler {
         try { return getPackageManager().getPackageInfo(getPackageName(), 0).versionName; } catch (Exception e) { return "?"; }
     }
 
-    /** Web modes: tell the page how to draw; "GPU layer" also puts the whole WebView in a hardware layer. */
+    /** Web modes: selects the page's render path; mode 3 also uses a hardware layer for the WebView. */
     private void applyDisplayMode() {
         if (web == null) return;
         web.setLayerType(mode == 3 ? View.LAYER_TYPE_HARDWARE : View.LAYER_TYPE_NONE, null);
@@ -531,8 +529,8 @@ public class MainActivity extends Activity implements CastServer.Handler {
     public void onStop() {
         ui.post(new Runnable() {
             public void run() {
-                if (nativeCasting()) showIdle("The PC stopped casting");
-                else js("stopCast('The PC stopped casting')");
+                if (nativeCasting()) showIdle("");
+                else js("stopCast('')");
             }
         });
     }
@@ -542,8 +540,8 @@ public class MainActivity extends Activity implements CastServer.Handler {
         if (apk.length < 4 || apk[0] != 'P' || apk[1] != 'K') throw new Exception("not an APK");
         ui.post(new Runnable() {
             public void run() {
-                if (nativeCasting()) showIdle("Installing the update... select Install when Android asks.");
-                else js("stopCast('Installing the update... select Install when Android asks.')");
+                if (nativeCasting()) showIdle("Installing update\u2026");
+                else js("stopCast('Installing update\u2026')");
             }
         });
         try {
@@ -554,7 +552,7 @@ public class MainActivity extends Activity implements CastServer.Handler {
         }
     }
 
-    /** Android's PackageInstaller API: works without a file-viewer app and shows the system's confirmation. */
+    /** Installs through a PackageInstaller session (no file-viewer app required). */
     private void installWithSession(byte[] apk) throws Exception {
         PackageInstaller installer = getPackageManager().getPackageInstaller();
         PackageInstaller.SessionParams params = new PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL);
@@ -649,7 +647,7 @@ public class MainActivity extends Activity implements CastServer.Handler {
                     finish();
                 } else {
                     lastBackPress = SystemClock.uptimeMillis();
-                    Toast.makeText(this, "Press Back again to close", Toast.LENGTH_SHORT).show();
+                    Toast.makeText(this, "Press Back again to exit", Toast.LENGTH_SHORT).show();
                 }
             }
             return true;
@@ -673,7 +671,7 @@ public class MainActivity extends Activity implements CastServer.Handler {
             // Up/down: choose how the native player decodes (also changes by itself if the picture freezes).
             if (event.getAction() == KeyEvent.ACTION_UP) {
                 autoSwitches = 0;
-                switchDecoder(player.strategy() + (code == KeyEvent.KEYCODE_DPAD_DOWN ? 1 : -1), "Decoding: ");
+                switchDecoder(player.strategy() + (code == KeyEvent.KEYCODE_DPAD_DOWN ? 1 : -1), "Decoder: ");
             }
             return true;
         }

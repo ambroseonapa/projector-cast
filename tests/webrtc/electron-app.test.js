@@ -60,7 +60,7 @@ const RECEIVER = 'file://' + path.resolve(__dirname, '../../receiver-android/ass
   const screens = await win.locator('#picker .pick-card').count();
   const groups = await win.locator('#picker .group').allTextContents();
   assert(!(await win.evaluate(() => document.querySelector('#picker details').open)), 'picker starts folded');
-  assert(groups.includes('Whole screen'), 'grouped picker: ' + groups);
+  assert(groups.includes('Screens'), 'grouped picker: ' + groups);
   console.log(`PASS app window opened, ${screens} source(s) listed under ${groups.join(' / ')}`);
   await win.screenshot({ path: path.join(__dirname, 'out-app-idle.png') });
 
@@ -147,6 +147,8 @@ const RECEIVER = 'file://' + path.resolve(__dirname, '../../receiver-android/ass
   await app.evaluate(({ BrowserWindow }) => {
     const w = new BrowserWindow({ width: 800, height: 600, x: 900, y: 100, title: 'Match Window', show: true });
     w.loadURL('data:text/html,<title>Match Window</title><body style="margin:0;background:%2300a050"><h1 style="color:white">MATCH</h1>');
+    const b = new BrowserWindow({ width: 400, height: 300, x: 100, y: 100, title: 'Song - YouTube and 3 more pages - Work - Microsoft Edge', show: true });
+    b.loadURL('data:text/html,<title>Song - YouTube and 3 more pages - Work - Microsoft Edge</title>');
   });
   await win.waitForTimeout(1500);
   await win.click('#picker summary');
@@ -154,11 +156,19 @@ const RECEIVER = 'file://' + path.resolve(__dirname, '../../receiver-android/ass
   await win.waitForTimeout(800);
   const names = await win.locator('#picker .pick-card span').allTextContents();
   const groups2 = await win.locator('#picker .group').allTextContents();
-  assert(names.includes('Match Window') && groups2.includes('One window'), 'window listed: ' + names + ' / ' + groups2);
+  assert(groups2.includes('Microsoft Edge (1)') && groups2.includes('Other (1)'), 'grouped by application: ' + groups2);
+  const edge = await win.locator('#picker .pick-card[title="Song - YouTube and 3 more pages - Work - Microsoft Edge"]').textContent();
+  assert(/^Song - YouTube\+3 tabs · Work$/.test(edge), 'browser window title split: ' + edge);
+  console.log('PASS windows grouped by application, browser titles shortened: "' + edge + '"');
+  await win.fill('#picker .tools input', 'match');
+  assert.strictEqual(await win.locator('#picker .pick-card').count(), 1, 'search filters the list');
+  await win.fill('#picker .tools input', '');
   assert(!names.includes('Projector Cast'), 'own window is not offered');
   await win.click('#picker .pick-card[title="Match Window"]');
   assert(!(await win.evaluate(() => document.querySelector('#picker details').open)), 'picker folds after a pick');
   assert(/Match Window/.test(await win.textContent('#picker summary')), 'folded picker shows the pick');
+  const names2 = await win.locator('#picker .pick-card .title').allTextContents();
+  assert(names2.includes('Match Window'), 'window listed: ' + names2);
   await win.click('#start');
   await win.waitForSelector('#update:not([hidden])', { timeout: 10000 });
   await win.click('#updateSkip');
@@ -173,7 +183,7 @@ const RECEIVER = 'file://' + path.resolve(__dirname, '../../receiver-android/ass
   });
   assert(one.w < 1000 && one.h < 800 && one.px[1] > 120 && one.px[0] < 60, 'projector shows only the green window: ' + JSON.stringify(one));
   console.log(`PASS casting one window: projector shows just that window (${one.w}x${one.h})`);
-  assert.strictEqual(await win.textContent('#castingWhat'), 'Window: Match Window');
+  assert.strictEqual(await win.textContent('#castingWhat'), 'Match Window');
 
   // Switch to the whole screen while casting, without reconnecting.
   const pcBefore = await receiver.evaluate(() => { window.__pcMark = pc; return true; });
@@ -183,7 +193,7 @@ const RECEIVER = 'file://' + path.resolve(__dirname, '../../receiver-android/ass
   await receiver.waitForFunction(() => document.getElementById('video').videoWidth > 1000, null, { timeout: 15000 });
   const same = await receiver.evaluate(() => window.__pcMark === pc);
   assert(pcBefore && same, 'switched without a new connection');
-  assert(/Entire screen|Screen/.test(await win.textContent('#castingWhat')), await win.textContent('#castingWhat'));
+  assert(/Entire screen/.test(await win.textContent('#castingWhat')), await win.textContent('#castingWhat'));
   console.log('PASS switched from the window to the whole screen while casting, same connection');
   // ...and back to the window.
   await win.click('#livePicker summary');
@@ -193,9 +203,9 @@ const RECEIVER = 'file://' + path.resolve(__dirname, '../../receiver-android/ass
   // Picked window closes before casting: must refuse, never fall back to the whole screen.
   await win.click('#stop');
   await receiver.waitForFunction(() => getComputedStyle(document.getElementById('idle')).display === 'flex', null, { timeout: 5000 });
-  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().find((w) => w.getTitle() === 'Match Window').close());
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().filter((w) => w.getTitle() !== 'Projector Cast').forEach((w) => w.close()));
   await win.waitForTimeout(500);
-  await win.evaluate(() => window.cast.prepareCapture({ screenId: selectedScreen, screenName: 'Match Window', audio: false }));
+  await win.evaluate(() => window.cast.prepareCapture({ screenId: selectedId, screenName: 'Match Window', audio: false }));
   const refused = await win.evaluate(() => navigator.mediaDevices.getDisplayMedia({ video: true }).then((s) => { s.getTracks().forEach((t) => t.stop()); return false; }, () => true));
   assert(refused, 'closed window is not silently replaced by the whole screen');
   console.log('PASS a closed window is refused instead of casting the whole screen');

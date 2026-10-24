@@ -37,9 +37,8 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Plays the cast with the native WebRTC library instead of the WebView: frames go from the
- * projector's hardware decoder straight to a SurfaceView, which avoids the WebView video
- * flicker some TV chips have, and sound plays as media (not as a voice call).
+ * Receives the cast with the native WebRTC library and renders to a SurfaceView, bypassing the
+ * WebView video path (which flickers on some TV chips). Audio is played with media attributes.
  */
 class NativePlayer {
 
@@ -81,10 +80,10 @@ class NativePlayer {
     private int strategy;
 
     /**
-     * Ways of decoding the picture. Some TV chips' hardware decoders show one frame and then stall
-     * when they draw straight to the screen; the app moves to the next way when that happens.
+     * Decoder setups, tried in order. Some TV hardware decoders stall after the first frame when
+     * rendering to a texture; MainActivity moves to the next setup when that happens.
      */
-    static final String[] STRATEGIES = {"hardware, direct", "hardware, via memory", "software"};
+    static final String[] STRATEGIES = {"hardware", "hardware (buffered)", "software"};
     private PeerConnection pc;
     private VideoTrack videoTrack;
     private FrameGate gate;
@@ -109,7 +108,7 @@ class NativePlayer {
 
     int strategy() { return strategy; }
 
-    /** UI thread. Ends any session and rebuilds the decoder setup; the PC reconnects by itself. */
+    /** UI thread. Ends the session and rebuilds the factory; the PC reconnects automatically. */
     void setStrategy(int s) {
         closeSession();
         if (s != strategy || factory == null) buildFactory(s);
@@ -138,7 +137,7 @@ class NativePlayer {
                 .createPeerConnectionFactory();
     }
 
-    /** Called on a server thread: sets up a new session for this offer and returns the answer SDP. */
+    /** Server thread. Starts a session for the offer and returns the answer SDP. */
     String answer(String offerSdp, String senderIp) throws Exception {
         final CountDownLatch closed = new CountDownLatch(1);
         ui.post(new Runnable() {
@@ -226,8 +225,8 @@ class NativePlayer {
     private int stuckSeconds;
 
     /**
-     * Call about once a second. Frozen = video keeps arriving for 3 s but no new picture reaches the
-     * screen (a still PC screen sends almost nothing, so it does not count as frozen).
+     * Call once a second. Reports a freeze when frames keep arriving for 3 s while none are rendered
+     * (a static source sends almost no frames, so it is not reported).
      */
     void checkHealth(final Health out) {
         final PeerConnection conn;
@@ -270,9 +269,8 @@ class NativePlayer {
     }
 
     /**
-     * Passes frames to the screen and reports the first frame of every session. (The renderer's own
-     * first-frame event fires only once per app start, which left the code screen covering the
-     * picture from the second cast on.)
+     * Forwards frames to the renderer and reports the first frame of each session (the renderer's own
+     * first-frame event fires only once per renderer).
      */
     private class FrameGate implements VideoSink {
         volatile boolean seen;
@@ -304,7 +302,7 @@ class NativePlayer {
         void show(String text);
     }
 
-    /** who: separate rate bookkeeping per reader (the on-screen panel and the PC's report poll). */
+    /** {@code who} keeps rate calculations separate for each caller. */
     void readStats(final String who, final StatsText out) {
         PeerConnection conn;
         synchronized (this) {
@@ -360,7 +358,7 @@ class NativePlayer {
                 double fps = perSec(prev, "vframes", m.get("framesDecoded"), ts);
                 Object bytes = m.get("bytesReceived");
                 double mbps = perSec(prev, "vbytes", bytes instanceof Number ? ((Number) bytes).doubleValue() * 8 / 1e6 : null, ts);
-                b.append("Player    NATIVE  \u00b7  decoding: ").append(STRATEGIES[strategy]).append("  (\u25b2\u25bc to change)\n");
+                b.append("Player    native, decoder: ").append(STRATEGIES[strategy]).append("\n");
                 b.append("Picture   ").append(size).append("  ").append(fmt(fps, 0)).append(" fps  ").append(fmt(mbps, 1)).append(" Mbps\n");
                 Object impl = m.get("decoderImplementation");
                 b.append("Decoder   ").append(codecName.replace("video/", "")).append(impl != null ? "  " + impl : "").append('\n');

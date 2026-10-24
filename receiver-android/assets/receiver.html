@@ -33,10 +33,9 @@
 <canvas id="canvas"></canvas>
 <div id="idle">
   <div class="title">Projector Cast</div>
-  <div class="label">Connection code</div>
+  <div class="label">Code</div>
   <div id="code">------</div>
-  <div class="hint">Open <b>Projector Cast</b> on your PC, type this code and press <b>Start casting</b>.<br>
-    The PC and projector must be on the same Wi-Fi / network.</div>
+  <div class="hint">Enter this code in Projector Cast on your PC.</div>
   <div id="ip"></div>
   <div id="status"></div>
   <div id="version"></div>
@@ -228,7 +227,7 @@ function handleOffer(id, offerText, sender, senderIp) {
   offer = { type: 'offer', sdp: unhideAddresses(offer.sdp, senderIp) };
   closePc();
   prev = {}; lastSize = '';
-  setStatus('Connecting to ' + sender + '...');
+  setStatus('Connecting to ' + sender + '\u2026');
   var conn = new RTCPeerConnection({ iceServers: [], bundlePolicy: 'max-bundle' });
   pc = conn;
   var stream = null;
@@ -249,16 +248,16 @@ function handleOffer(id, offerText, sender, senderIp) {
     var st = conn.iceConnectionState;
     if (st === 'connected' || st === 'completed') {
       clearTimeout(dropTimer);
-      showBadge('Casting from ' + sender + '  \u00b7  OK: stats  \u00b7  \u25c0 \u25b6: display mode', 6000);
+      showBadge(sender, 4000);
       clearInterval(statsTimer);
       statsTimer = setInterval(function () { readStats(conn); }, 1000);
     } else if (st === 'disconnected') {
       reconnects++;
-      showBadge('Connection weak...', 0);
+      showBadge('Weak connection\u2026', 0);
       clearTimeout(dropTimer);
-      dropTimer = setTimeout(function () { if (pc === conn) stopCast('Connection lost. Start casting again on the PC.'); }, 8000);
+      dropTimer = setTimeout(function () { if (pc === conn) stopCast('Connection lost.'); }, 8000);
     } else if (st === 'failed' || st === 'closed') {
-      if (pc === conn) stopCast('Connection lost. Start casting again on the PC.');
+      if (pc === conn) stopCast('Connection lost.');
     }
   };
 
@@ -270,13 +269,13 @@ function handleOffer(id, offerText, sender, senderIp) {
       Cast.answer(id, JSON.stringify({ type: 'answer', sdp: conn.localDescription.sdp }), '');
     })
     .catch(function (e) {
-      if (pc === conn) stopCast('Could not connect: ' + e);
+      if (pc === conn) stopCast('Connection failed: ' + e);
       Cast.answer(id, '', String(e && e.message || e));
     });
 }
 
 if (!window.RTCPeerConnection) {
-  setStatus('This projector\'s web engine is too old. Update "Android System WebView" and reopen the app.');
+  setStatus('Android System WebView is out of date. Update it and reopen the app.');
 }
 </script>
 </body>

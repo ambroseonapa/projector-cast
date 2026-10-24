@@ -1,20 +1,20 @@
 'use strict';
 
 /*
- * Sender side of the WebRTC session. No Electron APIs here: everything that touches the
- * network goes through the `api` object, so this file also runs in a plain browser for tests.
+ * Sender side of the WebRTC session. Network access goes through the `api` object, so this file
+ * has no Electron dependency and also runs in a plain browser (used by the tests).
  */
 (function (global) {
   const QUALITY = {
-    p540_30: { label: 'Projector-friendly 540p · 30 fps (smoothest on slow projectors)', width: 960, height: 540, fps: 30, kbps: 3500 },
-    p720_60: { label: 'HD 720p · 60 fps (smoothest, recommended)', width: 1280, height: 720, fps: 60, kbps: 6000 },
-    p720_30: { label: 'HD 720p · 30 fps (weak Wi-Fi)', width: 1280, height: 720, fps: 30, kbps: 5000 },
-    p1080_60: { label: 'Full HD 1080p · 60 fps (strong PC and projector)', width: 1920, height: 1080, fps: 60, kbps: 12000 },
-    p1080_30: { label: 'Full HD 1080p · 30 fps', width: 1920, height: 1080, fps: 30, kbps: 8000 },
-    p4k_30: { label: '4K · 30 fps (only for 4K projectors)', width: 3840, height: 2160, fps: 30, kbps: 25000 },
+    p540_30: { label: '540p, 30 fps (low-power projectors)', width: 960, height: 540, fps: 30, kbps: 3500 },
+    p720_60: { label: '720p, 60 fps', width: 1280, height: 720, fps: 60, kbps: 6000 },
+    p720_30: { label: '720p, 30 fps', width: 1280, height: 720, fps: 30, kbps: 5000 },
+    p1080_60: { label: '1080p, 60 fps', width: 1920, height: 1080, fps: 60, kbps: 12000 },
+    p1080_30: { label: '1080p, 30 fps', width: 1920, height: 1080, fps: 30, kbps: 8000 },
+    p4k_30: { label: '4K, 30 fps', width: 3840, height: 2160, fps: 30, kbps: 25000 },
   };
 
-  /** Raises the receiver's advertised limits so the PC starts sharp and sends stereo sound. */
+  /** Raises the bitrate limits in the projector's answer and enables stereo Opus. */
   function tuneAnswer(sdp, kbps) {
     const lines = sdp.split(/\r\n/);
     if (lines[lines.length - 1] === '') lines.pop();
@@ -24,14 +24,13 @@
     let fmtpSeen = {};
 
     const flushMissingFmtp = () => {
-      // Video codecs without an fmtp line (VP8) still need the bitrate hints.
       if (kind !== 'video') return;
       for (const pt of Object.keys(codecs)) {
         if (!fmtpSeen[pt] && /^(VP8|VP9|H264|AV1)$/i.test(codecs[pt])) out.push(`a=fmtp:${pt} ${bitrateHints(kbps)}`);
       }
     };
 
-    // First pass: find codec names per payload per section.
+    // Codec name per payload type, per media section.
     const sections = [];
     let cur = null;
     for (const l of lines) {
@@ -78,7 +77,7 @@
     return out.join('\r\n') + '\r\n';
   }
 
-  /** Replaces hidden "xxxx.local" ICE addresses with the projector's real IP (found by discovery). */
+  /** Replaces mDNS (.local) ICE candidates with the projector's IP address. */
   function unhideAddresses(sdp, ip) {
     if (!ip || !/^\d{1,3}(\.\d{1,3}){3}$/.test(ip)) return sdp;
     return sdp.replace(/^(a=candidate:\S+ \d+ udp \d+ )[0-9a-f-]+\.local( )/gim, `$1${ip}$2`);
@@ -108,7 +107,7 @@
 
   const codecKey = (c) => `${c.mimeType.toLowerCase()}|${c.clockRate}|${c.sdpFmtpLine || ''}`;
 
-  /** Orders `codecs` so the wanted codec comes first (baseline H.264 first of all: what TV chips decode in hardware). */
+  /** Puts the wanted codec first; baseline H.264 before other profiles. */
   function orderCodecs(codecs, codec) {
     const want = codec === 'vp8' ? /vp8/i : /h264/i;
     const baseline = (c) => (/42e01f|42001f/.test(c.sdpFmtpLine || '') ? 1 : 0);
@@ -117,9 +116,8 @@
   }
 
   /**
-   * Best effort: a codec preference is never worth failing the cast over. Chrome only accepts codecs it
-   * can also receive, and on many Windows PCs the GPU's H.264 encoder lists formats that aren't in that
-   * set (setCodecPreferences then throws "invalid codec with name H264"), so offer the shared ones only.
+   * Best effort. Chrome rejects codecs it cannot also receive, and some GPU encoders advertise H.264
+   * profiles outside that set, so only codecs present in both lists are offered.
    */
   function preferCodec(transceiver, codec) {
     if (!transceiver.setCodecPreferences || !global.RTCRtpReceiver || !RTCRtpReceiver.getCapabilities) return 'default';
@@ -139,15 +137,15 @@
   }
 
   /**
-   * One casting session: capture once, (re)connect to the projector as needed.
-   * events: onState(text, kind), onStats(text), onEnded(reason)
+   * One casting session: captures once and (re)connects to the projector as needed.
+   * events: onState(text, kind), onStats(text), onStream(stream), onQuality(key), onEnded(reason)
    */
   class CastSession {
     constructor(api, opts, events) {
       this.api = api;
       this.opts = opts;
       this.events = events;
-      this.q = QUALITY[opts.quality] || QUALITY.p1080_60;
+      this.q = QUALITY[opts.quality] || QUALITY.p720_60;
       this.stream = null;
       this.pc = null;
       this.stopped = false;
@@ -156,15 +154,22 @@
       this.statsTimer = null;
     }
 
+    videoConstraints() {
+      return {
+        width: { ideal: this.q.width, max: this.q.width },
+        height: { ideal: this.q.height, max: this.q.height },
+        frameRate: { ideal: this.q.fps, max: this.q.fps },
+      };
+    }
+
+    setContentHint(track) {
+      if ('contentHint' in track) track.contentHint = this.opts.content === 'detail' ? 'detail' : 'motion';
+    }
+
     async start(stream) {
       this.stream = stream || await navigator.mediaDevices.getDisplayMedia({
-        video: {
-          width: { ideal: this.q.width, max: this.q.width },
-          height: { ideal: this.q.height, max: this.q.height },
-          frameRate: { ideal: this.q.fps, max: this.q.fps },
-        },
-        // Voice-call processing (echo cancelling, noise suppression, auto volume) ruins music and
-        // commentary, so ask for the raw stereo sound.
+        video: this.videoConstraints(),
+        // Raw stereo: voice processing would degrade music and commentary.
         audio: this.opts.audio ? {
           echoCancellation: false, noiseSuppression: false, autoGainControl: false,
           channelCount: 2, sampleRate: 48000,
@@ -172,9 +177,9 @@
         systemAudio: 'include',
       });
       const v = this.stream.getVideoTracks()[0];
-      if (!v) throw new Error('No screen was captured');
+      if (!v) throw new Error('Nothing was captured.');
       if (this.events.onStream) this.events.onStream(this.stream);
-      if ('contentHint' in v) v.contentHint = this.opts.content === 'detail' ? 'detail' : 'motion';
+      this.setContentHint(v);
       this.watchEnd(v);
       for (const a of this.stream.getAudioTracks()) if ('contentHint' in a) a.contentHint = 'music';
       await this.connect();
@@ -182,25 +187,18 @@
 
     watchEnd(track) {
       track.addEventListener('ended', () => {
-        // Only the track being cast right now ends the session (not one replaced by switchSource).
-        if (this.stream && this.stream.getVideoTracks()[0] === track) this.stop('Screen sharing was stopped');
+        // Ignore tracks already replaced by switchSource().
+        if (this.stream && this.stream.getVideoTracks()[0] === track) this.stop('Capture stopped.');
       });
     }
 
-    /** Cast a different screen/window without reconnecting: the picture changes, the sound carries on. */
+    /** Switches to another screen or window without reconnecting; sound continues. */
     async switchSource() {
       if (this.stopped) return;
-      const fresh = await navigator.mediaDevices.getDisplayMedia({
-        video: {
-          width: { ideal: this.q.width, max: this.q.width },
-          height: { ideal: this.q.height, max: this.q.height },
-          frameRate: { ideal: this.q.fps, max: this.q.fps },
-        },
-        audio: false,
-      });
+      const fresh = await navigator.mediaDevices.getDisplayMedia({ video: this.videoConstraints(), audio: false });
       const nv = fresh.getVideoTracks()[0];
-      if (!nv) throw new Error('Nothing was captured');
-      if ('contentHint' in nv) nv.contentHint = this.opts.content === 'detail' ? 'detail' : 'motion';
+      if (!nv) throw new Error('Nothing was captured.');
+      this.setContentHint(nv);
       const old = this.stream.getVideoTracks()[0];
       this.stream.removeTrack(old);
       this.stream.addTrack(nv);
@@ -228,7 +226,7 @@
 
       pc.addEventListener('iceconnectionstatechange', () => this.onIce(pc));
 
-      this.events.onState('Connecting to the projector...', 'busy');
+      this.events.onState('Connecting…', 'busy');
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
       await waitForIce(pc, 2500);
@@ -238,8 +236,7 @@
         { type: 'offer', sdp: pc.localDescription.sdp, buffer: this.opts.buffer == null ? 150 : this.opts.buffer });
       if (pc !== this.pc) return;
       await pc.setRemoteDescription({ type: 'answer', sdp: tuneAnswer(unhideAddresses(answer.sdp, this.opts.ip), this.q.kbps) });
-      // The projector says goodbye (DTLS close) when it drops the connection, e.g. on a display-mode
-      // switch: reconnect at once instead of waiting for the connection to time out.
+      // The projector closes DTLS when it drops the session (e.g. display-mode switch): reconnect at once.
       const dtls = vt.sender.transport;
       if (dtls) {
         dtls.addEventListener('statechange', () => {
@@ -264,14 +261,13 @@
       if (!p.encodings || !p.encodings.length) p.encodings = [{}];
       p.encodings[0].maxBitrate = this.q.kbps * 1000;
       p.encodings[0].maxFramerate = Math.min(this.q.fps, this.fpsCap || this.q.fps);
-      // Screen capture ignores size limits on some PCs; scale down here so the chosen quality is what's sent.
+      // Capture may ignore the size constraints; scale in the encoder instead.
       const s = sender.track && sender.track.getSettings ? sender.track.getSettings() : {};
       const scale = s.width && s.height ? Math.max(1, s.width / this.q.width, s.height / this.q.height) : 1;
       p.encodings[0].scaleResolutionDownBy = scale;
       p.encodings[0].priority = 'high';
       p.encodings[0].networkPriority = 'high';
-      // Never change the picture size mid-stream: on TV chips every size change resets the hardware
-      // decoder, which shows as the picture blinking. When Wi-Fi dips, lower quality/fps instead.
+      // Resolution changes reset TV hardware decoders (visible as blinking); trade quality/fps instead.
       p.degradationPreference = 'maintain-resolution';
       try {
         await sender.setParameters(p);
@@ -290,9 +286,8 @@
         this.events.onState('Casting to ' + (this.opts.name || 'projector'), 'live');
         this.startStats();
       } else if (st === 'disconnected') {
-        this.events.onState('Connection weak, holding on...', 'busy');
-        // The projector closes the connection when its display mode is switched: reconnect quickly
-        // instead of waiting ~30 s for the browser to declare the connection failed.
+        this.events.onState('Weak connection…', 'busy');
+        // Reconnect after 3 s rather than waiting ~30 s for ICE to fail.
         this.weakTimer = setTimeout(() => {
           if (pc === this.pc && pc.iceConnectionState === 'disconnected') this.reconnect();
         }, 3000);
@@ -303,10 +298,10 @@
 
     reconnect() {
       if (this.stopped || this.reconnecting) return;
-      if (this.retries >= 8) return this.stop('Lost the projector. Check both are on the same network.');
+      if (this.retries >= 8) return this.stop('Connection to the projector lost.');
       this.retries++;
       this.reconnecting = true;
-      this.events.onState(`Reconnecting (${this.retries}/8)...`, 'busy');
+      this.events.onState(`Reconnecting (${this.retries}/8)…`, 'busy');
       setTimeout(() => {
         this.reconnecting = false;
         this.connect().catch(() => this.reconnect());
@@ -314,10 +309,9 @@
     }
 
     /**
-     * Called with the projector's decoded frames per second (from its stats, every 2 s). Sending more
-     * frames than it can decode makes them queue up: the picture falls behind the sound (slow motion)
-     * until the projector throws the queue away. So cap the frame rate at what it really manages,
-     * and try a little higher again after a while.
+     * Called every 2 s with the projector's decoded frame rate. Frames sent faster than the projector
+     * decodes them queue up and the picture lags behind the sound, so the send rate is capped just
+     * below the decode rate and raised again after 30 s of keeping up.
      */
     async adaptToProjector(decodedFps) {
       if (this.stopped || !this.pc || !(decodedFps >= 0)) return;
@@ -340,11 +334,29 @@
       if (next === cap) return;
       this.fpsCap = next >= this.q.fps ? 0 : next;
       this.decodedSamples = [];
+      // Under 24 fps, step down to 540p once: it decodes faster.
+      if (this.fpsCap && this.fpsCap < 24 && this.q.width > 960 && !this.autoReduced) {
+        this.autoReduced = true;
+        await this.setQuality('p540_30');
+        if (this.events.onQuality) this.events.onQuality('p540_30');
+        return;
+      }
       const sender = this.pc.getSenders().find((x) => x.track && x.track.kind === 'video');
       if (sender) await this.tuneSender(sender);
     }
 
-    /** Change quality / content / delay while casting: re-tunes the capture and reconnects (about a second). */
+    /** Changes size and frame rate in place, without reconnecting. */
+    async setQuality(key) {
+      this.q = QUALITY[key] || this.q;
+      this.opts.quality = key;
+      this.fpsCap = 0;
+      this.decodedSamples = [];
+      try { await this.stream.getVideoTracks()[0].applyConstraints(this.videoConstraints()); } catch (_) { /* encoder scales */ }
+      const sender = this.pc && this.pc.getSenders().find((x) => x.track && x.track.kind === 'video');
+      if (sender) await this.tuneSender(sender);
+    }
+
+    /** Applies new quality, content and buffer settings; reconnects (about a second). */
     async update(changes) {
       if (this.stopped) return;
       Object.assign(this.opts, changes);
@@ -352,14 +364,8 @@
       this.fpsCap = 0;
       this.decodedSamples = [];
       const v = this.stream.getVideoTracks()[0];
-      if ('contentHint' in v) v.contentHint = this.opts.content === 'detail' ? 'detail' : 'motion';
-      try {
-        await v.applyConstraints({
-          width: { ideal: this.q.width, max: this.q.width },
-          height: { ideal: this.q.height, max: this.q.height },
-          frameRate: { ideal: this.q.fps, max: this.q.fps },
-        });
-      } catch (_) { /* keep current capture size; the sender still scales down */ }
+      this.setContentHint(v);
+      try { await v.applyConstraints(this.videoConstraints()); } catch (_) { /* encoder scales */ }
       this.retries = 0;
       await this.connect();
     }
@@ -387,14 +393,14 @@
             const fps = r.framesPerSecond != null ? `${Math.round(r.framesPerSecond)} fps` : '';
             const mbps = kbps != null ? (kbps / 1000).toFixed(1) + ' Mbps' : '';
             let limit = '';
-            if (r.qualityLimitationReason === 'bandwidth') limit = ' · Wi-Fi is limiting quality';
-            else if (r.qualityLimitationReason === 'cpu') limit = ' · PC is busy, lowering quality';
+            if (r.qualityLimitationReason === 'bandwidth') limit = ' · limited by network';
+            else if (r.qualityLimitationReason === 'cpu') limit = ' · limited by CPU';
             video = [size, fps, mbps].filter(Boolean).join(' · ') + limit
-              + (this.fpsCap ? ` · matched to projector (${this.fpsCap} fps)` : '');
+              + (this.fpsCap ? ` · capped at ${this.fpsCap} fps` : '');
           } else if (r.kind === 'audio' && kbps != null) {
             const t = this.stream && this.stream.getAudioTracks()[0];
             const ch = t && t.getSettings ? t.getSettings().channelCount : null;
-            audio = `Sound ${Math.round(kbps)} kbps${ch === 1 ? ' mono' : ch === 2 ? ' stereo' : ''}`;
+            audio = `Audio ${Math.round(kbps)} kbps${ch === 1 ? ' mono' : ch === 2 ? ' stereo' : ''}`;
           }
         });
         this.events.onStats([video, audio].filter(Boolean).join('\n'));

@@ -18,6 +18,6 @@ contextBridge.exposeInMainWorld('cast', {
   projectorStats: (ip, code) => ipcRenderer.invoke('projector-stats', { ip, code }),
   copyText: (text) => ipcRenderer.invoke('copy-text', text),
   appInfo: () => ipcRenderer.invoke('app-info'),
-  onUpdateReady: (cb) => ipcRenderer.on('update-ready', (_e, version) => cb(version)),
+  onUpdateStatus: (cb) => ipcRenderer.on('update-status', (_e, status) => cb(status)),
   installUpdate: () => ipcRenderer.invoke('install-update'),
 });

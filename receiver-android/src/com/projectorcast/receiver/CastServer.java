@@ -17,7 +17,7 @@ import java.util.Locale;
 import java.util.Map;
 
 /**
- * LAN signalling for the receiver. Plain Java (no Android classes) so it can be tested on a desktop JVM.
+ * LAN signalling for the receiver. Plain Java, no Android dependencies (tested on a desktop JVM).
  *
  * UDP  {@link #DISCOVERY_PORT}: "PCAST?<code>" -> "PCAST!<name>" (only when the code matches)
  * HTTP {@link #HTTP_PORT}:
@@ -212,7 +212,7 @@ public class CastServer {
         }
     }
 
-    /** Stops code guessing on the local network: 10 wrong codes lock casting for 30 seconds. */
+    /** Rate-limits code guessing: 10 wrong codes lock requests for 30 seconds. */
     private synchronized boolean codeAccepted(String given) {
         long now = System.currentTimeMillis();
         if (now < lockedUntil) return false;
@@ -254,7 +254,7 @@ public class CastServer {
         out.flush();
     }
 
-    /** JSON string literal; also safe to drop into JavaScript source on old WebViews. */
+    /** JSON string literal, also safe to embed in JavaScript source. */
     public static String quote(String s) {
         StringBuilder b = new StringBuilder("\"");
         for (int i = 0; i < s.length(); i++) {

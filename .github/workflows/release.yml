@@ -1,8 +1,6 @@
 name: Release
 
-# Builds both apps and publishes them on the repository's Releases page, named after the
-# version in sender-pc/package.json. Runs when the `release` branch is pushed (e.g.
-# `git push origin main:release`), when a v* tag is pushed, or by hand from the Actions tab.
+# Builds both apps and publishes a release named after the version in sender-pc/package.json.
 on:
   push:
     branches: [release]
@@ -71,14 +69,6 @@ jobs:
         with:
           path: out
           merge-multiple: true
-      - name: Remove releases built before the signing key left the repository
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          for t in v1.3.0 v1.4.0 v1.5.0; do
-            gh release delete "$t" --cleanup-tag --yes --repo "$GITHUB_REPOSITORY" || true
-            gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/$t" || true
-          done
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
@@ -87,11 +77,8 @@ jobs:
           name: Projector Cast ${{ github.ref_type == 'tag' && github.ref_name || steps.version.outputs.v }}
           make_latest: true
           body: |
-            **Downloads** (under Assets below)
-            - **ProjectorCast-Setup-….exe**: install on your Windows PC.
-            - **ProjectorCast.apk**: install on the projector by USB the first time; after that the PC app updates it.
-
-            Installed PC apps (1.6 and later) update themselves from here.
+            - `ProjectorCast-Setup-*.exe`: Windows installer
+            - `ProjectorCast.apk`: Android TV app (first install only; later updates come from the PC app)
           files: |
             out/ProjectorCast.apk
             out/ProjectorCast-Setup-*.exe

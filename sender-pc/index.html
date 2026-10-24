@@ -10,53 +10,49 @@
 <main>
   <header>
     <h1>Projector Cast</h1>
-    <p class="sub">Mirror this PC's screen and sound to your projector.</p>
   </header>
 
   <section class="card" id="setup">
-    <label for="code">Code shown on the projector</label>
-    <input id="code" inputmode="numeric" maxlength="6" placeholder="123456" autocomplete="off">
+    <label for="code">Projector code</label>
+    <input id="code" inputmode="numeric" maxlength="6" placeholder="000000" autocomplete="off">
 
-    <label>What to cast</label>
+    <label>Source</label>
     <div id="picker" class="picker"></div>
-    <p class="hint">Pick a <b>window</b> (for example the browser playing the match) to keep using the rest of your PC while only that window plays on the projector. Keep that window open (not minimised).</p>
 
-    <label for="quality">Picture quality</label>
+    <label for="quality">Quality</label>
     <select id="quality"></select>
 
-    <label for="content">What are you showing?</label>
+    <label for="content">Content</label>
     <select id="content">
-      <option value="motion">Videos, sport, games (smoothest)</option>
-      <option value="detail">Documents, slides (sharpest text)</option>
+      <option value="motion">Video</option>
+      <option value="detail">Text and slides</option>
     </select>
 
-    <label class="check"><input type="checkbox" id="audio" checked> Send PC sound to the projector</label>
-    <label class="check"><input type="checkbox" id="muteLocal" checked> Play sound only on the projector (mute this PC)</label>
-    <p class="note" id="audioNote" hidden>Sound casting works on Windows only.</p>
-
+    <label class="check"><input type="checkbox" id="audio" checked> Send sound</label>
+    <label class="check"><input type="checkbox" id="muteLocal" checked> Mute this PC while casting</label>
+    <p class="note" id="audioNote" hidden>Sound is available on Windows only.</p>
 
     <details>
       <summary>Advanced</summary>
-      <label for="ip">Projector address (only if the code isn't found)</label>
-      <input id="ip" placeholder="e.g. 192.168.1.25" autocomplete="off">
-      <label for="buffer">Delay</label>
+      <label for="ip">Projector IP address</label>
+      <input id="ip" placeholder="Automatic" autocomplete="off">
+      <label for="buffer">Buffer</label>
       <select id="buffer">
-        <option value="150">Smooth (recommended)</option>
-        <option value="0">Lowest delay (may stutter on weak Wi-Fi)</option>
-        <option value="400">Extra smooth (more delay)</option>
+        <option value="150">Normal</option>
+        <option value="0">Low latency</option>
+        <option value="400">Large</option>
       </select>
-      <label for="capture">Capture method</label>
+      <label for="capture">Screen capture</label>
       <select id="capture">
-        <option value="auto">Automatic</option>
-        <option value="compat">Compatibility (try this if the picture flickers)</option>
+        <option value="auto">Standard</option>
+        <option value="compat">Compatibility</option>
       </select>
-      <p class="hint">Changing the capture method restarts this app.</p>
       <label for="codec">Video codec</label>
       <select id="codec">
-        <option value="h264">H.264 (best for projectors)</option>
-        <option value="vp8">VP8 (try if the picture is black)</option>
+        <option value="h264">H.264</option>
+        <option value="vp8">VP8</option>
       </select>
-      <button id="copyLast" class="secondary" type="button" hidden>Copy report (last cast)</button>
+      <button id="copyLast" class="secondary" type="button" hidden>Copy report</button>
     </details>
 
     <button id="start" class="primary">Start casting</button>
@@ -64,54 +60,49 @@
 
   <section class="card" id="update" hidden>
     <div id="updateText"></div>
-    <p class="hint">The projector will show an install screen. Select <b>Install</b> with the remote, then open Projector Cast again.
-      (The first time, Android may ask you to allow installing from Projector Cast. Allow it.)</p>
-    <button id="updateNow" class="primary">Update the projector app</button>
-    <button id="updateSkip" class="secondary">Cast without updating</button>
+    <p class="hint">Confirm the installation on the projector, then open Projector Cast again.</p>
+    <button id="updateNow" class="primary">Update projector</button>
+    <button id="updateSkip" class="secondary">Not now</button>
   </section>
 
   <section class="card" id="live" hidden>
     <div class="dot" id="dot"></div>
-    <div id="state">Connecting...</div>
+    <div id="state">Connecting…</div>
     <div id="castingWhat" class="stats"></div>
     <div id="stats" class="stats"></div>
     <video id="preview" muted autoplay playsinline></video>
-    <p class="hint">Preview of what is being sent. If this preview flickers too, the flicker starts on the PC:
-      stop, then set <b>Advanced → Capture method → Compatibility</b>. If only the projector flickers, press
-      <b>◀ ▶</b> on the projector remote to try its other display modes.</p>
     <details id="liveSettings">
-      <summary>⚙ Settings while casting</summary>
-      <label>What to cast (switches straight away)</label>
+      <summary>Settings</summary>
+      <label>Source</label>
       <div id="livePicker" class="picker"></div>
-      <label for="liveQuality">Picture quality</label>
+      <label for="liveQuality">Quality</label>
       <select id="liveQuality"></select>
-      <label for="liveContent">What are you showing?</label>
+      <label for="liveContent">Content</label>
       <select id="liveContent">
-        <option value="motion">Videos, sport, games (smoothest)</option>
-        <option value="detail">Documents, slides (sharpest text)</option>
+        <option value="motion">Video</option>
+        <option value="detail">Text and slides</option>
       </select>
-      <label for="liveBuffer">Delay</label>
+      <label for="liveBuffer">Buffer</label>
       <select id="liveBuffer">
-        <option value="150">Smooth (recommended)</option>
-        <option value="0">Lowest delay</option>
-        <option value="400">Extra smooth (more delay)</option>
+        <option value="150">Normal</option>
+        <option value="0">Low latency</option>
+        <option value="400">Large</option>
       </select>
-      <button id="applyLive" class="secondary" type="button">Apply (the picture pauses for a second)</button>
+      <button id="applyLive" class="secondary" type="button">Apply</button>
     </details>
     <details id="liveAdvanced">
       <summary>Advanced</summary>
-      <label>Projector (what it sees)</label>
-      <pre id="projStats">Waiting for the projector...</pre>
+      <label>Projector status</label>
+      <pre id="projStats">Waiting for the projector…</pre>
       <button id="copyReport" class="secondary" type="button">Copy report</button>
     </details>
-    <p class="tip">You can minimise this window. Casting keeps running until you press Stop.</p>
     <button id="stop" class="danger">Stop casting</button>
   </section>
 
   <p id="error" class="error" role="alert"></p>
   <p id="pcUpdate" class="update-line" hidden>
     <span id="pcUpdateText"></span>
-    <button id="pcUpdateNow" class="link" type="button">Restart to update</button>
+    <button id="pcUpdateNow" class="link" type="button" hidden>Update now</button>
   </p>
 </main>
 <script src="cast-core.js"></script>
