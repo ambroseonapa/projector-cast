@@ -1,7 +1,7 @@
 'use strict';
 
 const { app, BrowserWindow, ipcMain, desktopCapturer, session, powerSaveBlocker, shell, clipboard, screen } = require('electron');
-const { execFile } = require('child_process');
+const { execFile, spawn } = require('child_process');
 const dgram = require('dgram');
 const http = require('http');
 const fs = require('fs');
@@ -225,6 +225,79 @@ ipcMain.handle('vdd-set', async (_e, on) => {
 });
 
 ipcMain.handle('open-display-settings', () => shell.openExternal('ms-settings:display'));
+
+// ---- Keys pressed on the projector remote ----
+
+// Media keys reach whichever app is playing; arrow keys go to the cast window.
+const REMOTE_KEYS = {
+  playpause: { vk: 0xB3, mpris: ['play-pause'] },
+  next: { vk: 0xB0, mpris: ['next'] },
+  previous: { vk: 0xB1, mpris: ['previous'] },
+  back: { vk: 0x25, toWindow: true, mpris: ['position', '10-'] },
+  forward: { vk: 0x27, toWindow: true, mpris: ['position', '10+'] },
+};
+
+// One PowerShell process for the whole session: starting one per key press takes about a second.
+const KEY_HELPER = `
+Add-Type @'
+using System; using System.Runtime.InteropServices;
+public static class Keys {
+  [DllImport("user32.dll")] static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extra);
+  [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr h);
+  [DllImport("user32.dll")] static extern bool IsIconic(IntPtr h);
+  [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr h, int cmd);
+  public static void Press(byte vk) { keybd_event(vk, 0, 1, UIntPtr.Zero); keybd_event(vk, 0, 3, UIntPtr.Zero); }
+  public static void Focus(long hwnd) {
+    IntPtr h = new IntPtr(hwnd);
+    if (IsIconic(h)) ShowWindow(h, 9);
+    Press(0x87); // F24: Windows only lets the process that sent the last input change the active window
+    SetForegroundWindow(h);
+  }
+}
+'@
+while (($line = [Console]::In.ReadLine()) -ne $null) {
+  $p = $line.Split(' ')
+  if ($p[1] -ne '0') { [Keys]::Focus([long]$p[1]); Start-Sleep -Milliseconds 60 }
+  [Keys]::Press([byte]$p[0])
+}`;
+
+let keyHelper = null;
+
+function pressOnWindows(vk, hwnd) {
+  if (!keyHelper || keyHelper.exitCode !== null) {
+    const encoded = Buffer.from(KEY_HELPER, 'utf16le').toString('base64');
+    keyHelper = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded],
+      { windowsHide: true, stdio: ['pipe', 'ignore', 'ignore'] });
+    keyHelper.on('error', () => { keyHelper = null; });
+    keyHelper.stdin.on('error', () => { /* helper exited */ });
+  }
+  keyHelper.stdin.write(`${vk} ${hwnd}\r\n`);
+}
+
+/** Window handle of the cast window ("window:<hwnd>:0"), or 0 for a whole screen. */
+function castWindowHandle() {
+  const m = /^window:(\d+):/.exec(String(chosenScreenId || ''));
+  return m ? m[1] : '0';
+}
+
+ipcMain.handle('remote-key', (_e, key) => {
+  const k = REMOTE_KEYS[key];
+  if (!k) return false;
+  if (process.platform === 'win32') {
+    const hwnd = k.toWindow ? castWindowHandle() : '0';
+    // Casting a whole screen: arrow keys go to the active window, unless that is this app.
+    if (k.toWindow && hwnd === '0' && win && win.isFocused()) return false;
+    pressOnWindows(k.vk, hwnd);
+    return true;
+  }
+  if (process.platform === 'linux') {
+    // Media players and browsers that support MPRIS.
+    return new Promise((resolve) => execFile('playerctl', k.mpris, { timeout: 3000 }, (err) => resolve(!err)));
+  }
+  return false;
+});
+
+app.on('will-quit', () => { if (keyHelper) keyHelper.kill(); });
 
 ipcMain.handle('get-settings', () => ({ captureMethod: settings.captureMethod || 'auto' }));
 

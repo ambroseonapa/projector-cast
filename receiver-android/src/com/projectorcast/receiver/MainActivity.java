@@ -71,6 +71,7 @@ public class MainActivity extends Activity implements CastServer.Handler {
     private NativePlayer player;
     private TextView badge;
     private TextView statsView;
+    private TextView menuView;
     private boolean statsOn;
     private int mode;
     private String sender = "PC";
@@ -98,6 +99,7 @@ public class MainActivity extends Activity implements CastServer.Handler {
                 surface = new SurfaceViewRenderer(this);
                 root.addView(surface, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
                 player = new NativePlayer(this, surface, nativeEvents, prefs().getInt("decoder", 0));
+                applyPicture();
                 surface.setVisibility(View.GONE);
             } catch (Throwable t) {
                 if (surface != null) root.removeView(surface);
@@ -122,6 +124,7 @@ public class MainActivity extends Activity implements CastServer.Handler {
             public void onPageFinished(WebView view, String url) {
                 pageReady = true;
                 pushInfo();
+                applyPicture();
             }
         });
         web.setFocusable(false);
@@ -132,6 +135,10 @@ public class MainActivity extends Activity implements CastServer.Handler {
         root.addView(statsView, overlayParams(Gravity.BOTTOM | Gravity.START));
         badge = overlayText(Gravity.TOP | Gravity.END, 16);
         root.addView(badge, overlayParams(Gravity.TOP | Gravity.END));
+        menuView = overlayText(Gravity.START, 18);
+        menuView.setTypeface(Typeface.MONOSPACE);
+        menuView.setLineSpacing(0, 1.25f);
+        root.addView(menuView, overlayParams(Gravity.CENTER_VERTICAL | Gravity.START));
         setContentView(root);
         hideSystemUi();
         web.loadUrl("file:///android_asset/receiver.html");
@@ -207,6 +214,8 @@ public class MainActivity extends Activity implements CastServer.Handler {
             o.put("mode", mode + "/4 " + MODES[mode]);
             o.put("decoding", player != null ? NativePlayer.STRATEGIES[player.strategy()] : "native player not available");
             o.put("casting", nativeCasting() ? "native" : "web or idle");
+            o.put("picture", "brightness " + setting(0) + ", contrast " + setting(1) + ", colour " + setting(2) + ", sharpness " + setting(3)
+                    + (player != null && player.picture.failed() ? " (not supported by this GPU)" : ""));
             o.put("stats", text[0]);
             JSONArray ev = new JSONArray();
             synchronized (events) {
@@ -383,7 +392,7 @@ public class MainActivity extends Activity implements CastServer.Handler {
             ui.postDelayed(noPictureCheck, 8000);
             ui.removeCallbacks(healthTick);
             ui.postDelayed(healthTick, 2000);
-            showBadge(sender + "  \u00b7  OK: status  \u00b7  \u25c0 \u25b6: display mode", 4000);
+            showBadge(sender + "  \u00b7  OK: status  \u00b7  \u25c0 \u25b6: display mode  \u00b7  hold OK: menu", 4000);
         }
 
         public void onEnded(String reason) {
@@ -624,6 +633,160 @@ public class MainActivity extends Activity implements CastServer.Handler {
         }
     }
 
+    // ---- Menu (Menu key or hold OK): picture settings and keys for the PC ----
+
+    private static final String[] SETTINGS = {"Brightness", "Contrast", "Colour", "Sharpness"};
+    private static final String[] SETTING_KEYS = {"pictureBrightness", "pictureContrast", "pictureColour", "pictureSharpness"};
+    /** Menu rows after the settings: label and the key sent to the PC (null = reset picture). */
+    private static final String[][] ACTIONS = {
+            {"Reset picture", null},
+            {"PC: play / pause", "playpause"},
+            {"PC: back", "back"},
+            {"PC: forward", "forward"},
+            {"PC: previous", "previous"},
+            {"PC: next", "next"},
+    };
+    private static final Map<String, String> KEY_NAMES = new HashMap<String, String>();
+
+    static {
+        for (String[] a : ACTIONS) if (a[1] != null) KEY_NAMES.put(a[1], a[0].substring(4));
+    }
+
+    private boolean menuOpen;
+    private int menuRow;
+
+    private int setting(int i) {
+        return prefs().getInt(SETTING_KEYS[i], 0);
+    }
+
+    private void applyPicture() {
+        if (player != null) player.picture.set(setting(0), setting(1), setting(2), setting(3));
+        js("setPicture(" + setting(0) + "," + setting(1) + "," + setting(2) + ")");
+    }
+
+    private final Runnable closeMenu = new Runnable() {
+        public void run() { setMenu(false); }
+    };
+
+    private void setMenu(boolean open) {
+        menuOpen = open;
+        ui.removeCallbacks(closeMenu);
+        if (!open) {
+            menuView.setVisibility(View.GONE);
+            return;
+        }
+        ui.postDelayed(closeMenu, 15000);
+        StringBuilder b = new StringBuilder("Picture\n");
+        for (int i = 0; i < SETTINGS.length + ACTIONS.length; i++) {
+            if (i == SETTINGS.length + 1) b.append("\nPC\n");
+            b.append(i == menuRow ? "▸ " : "  ");
+            if (i < SETTINGS.length) {
+                int v = setting(i);
+                String value = (v > 0 && i < 3 ? "+" : "") + v;
+                b.append(String.format(java.util.Locale.US, "%-11s", SETTINGS[i]))
+                        .append(i == menuRow ? "◀ " + value + " ▶" : "  " + value);
+                if (i == 3 && mode != 1) b.append("  (display mode 1 only)");
+            } else {
+                b.append(ACTIONS[i - SETTINGS.length][0].replace("PC: ", ""));
+            }
+            b.append('\n');
+        }
+        b.append("\n▲▼ choose  ◀▶ change  OK select  Back close");
+        menuView.setText(b.toString());
+        menuView.setVisibility(View.VISIBLE);
+    }
+
+    private void menuMove(int step) {
+        int rows = SETTINGS.length + ACTIONS.length;
+        menuRow = ((menuRow + step) % rows + rows) % rows;
+        setMenu(true);
+    }
+
+    private void menuChange(int step) {
+        if (menuRow >= SETTINGS.length) return;
+        int min = menuRow == 3 ? 0 : -50, max = menuRow == 3 ? 100 : 50;
+        int v = Math.max(min, Math.min(max, setting(menuRow) + step * (menuRow == 3 ? 10 : 5)));
+        prefs().edit().putInt(SETTING_KEYS[menuRow], v).apply();
+        applyPicture();
+        setMenu(true);
+    }
+
+    private void menuSelect() {
+        if (menuRow < SETTINGS.length) {
+            setMenu(false);
+            return;
+        }
+        String key = ACTIONS[menuRow - SETTINGS.length][1];
+        if (key == null) {
+            SharedPreferences.Editor e = prefs().edit();
+            for (String k : SETTING_KEYS) e.remove(k);
+            e.apply();
+            log("picture reset");
+            applyPicture();
+            setMenu(true);
+        } else {
+            sendToPc(key);
+            setMenu(true);
+        }
+    }
+
+    /** Sends a remote key to the PC over the casting connection. */
+    private void sendToPc(final String key) {
+        final String name = KEY_NAMES.get(key);
+        if (nativeCasting()) {
+            pcKeyResult(name, player.sendControl(key));
+        } else if (web != null) {
+            web.evaluateJavascript("pc ? sendControl(" + CastServer.quote(key) + ") : null", new android.webkit.ValueCallback<String>() {
+                public void onReceiveValue(String v) {
+                    if ("null".equals(v)) showBadge("Start casting from the PC first.", 3000);
+                    else pcKeyResult(name, "true".equals(v));
+                }
+            });
+        }
+    }
+
+    private void pcKeyResult(String name, boolean sent) {
+        showBadge(sent ? "PC: " + name : "Update Projector Cast on the PC to control it from here.", sent ? 1500 : 4000);
+    }
+
+    private static String mediaKey(int code) {
+        switch (code) {
+            case KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE:
+            case KeyEvent.KEYCODE_MEDIA_PLAY:
+            case KeyEvent.KEYCODE_MEDIA_PAUSE:
+                return "playpause";
+            case KeyEvent.KEYCODE_MEDIA_NEXT:
+                return "next";
+            case KeyEvent.KEYCODE_MEDIA_PREVIOUS:
+                return "previous";
+            case KeyEvent.KEYCODE_MEDIA_FAST_FORWARD:
+                return "forward";
+            case KeyEvent.KEYCODE_MEDIA_REWIND:
+                return "back";
+            default:
+                return null;
+        }
+    }
+
+    /** Menu keys while the menu is open. */
+    private boolean menuKey(KeyEvent event) {
+        int code = event.getKeyCode();
+        boolean down = event.getAction() == KeyEvent.ACTION_DOWN;
+        boolean up = event.getAction() == KeyEvent.ACTION_UP;
+        if (code == KeyEvent.KEYCODE_BACK || code == KeyEvent.KEYCODE_MENU || code == KeyEvent.KEYCODE_SETTINGS) {
+            if (up) setMenu(false);
+        } else if (code == KeyEvent.KEYCODE_DPAD_UP || code == KeyEvent.KEYCODE_DPAD_DOWN) {
+            if (down) menuMove(code == KeyEvent.KEYCODE_DPAD_DOWN ? 1 : -1);
+        } else if (code == KeyEvent.KEYCODE_DPAD_LEFT || code == KeyEvent.KEYCODE_DPAD_RIGHT) {
+            if (down) menuChange(code == KeyEvent.KEYCODE_DPAD_RIGHT ? 1 : -1);
+        } else if (code == KeyEvent.KEYCODE_DPAD_CENTER || code == KeyEvent.KEYCODE_ENTER || code == KeyEvent.KEYCODE_NUMPAD_ENTER) {
+            if (up) menuSelect();
+        } else {
+            return false;
+        }
+        return true;
+    }
+
     // ---- Activity plumbing ----
 
     private void hideSystemUi() {
@@ -642,7 +805,8 @@ public class MainActivity extends Activity implements CastServer.Handler {
         if (hasFocus) hideSystemUi();
     }
 
-    // Touch devices without a remote: tap = status, swipe left/right = display mode.
+    // Touch devices without a remote: tap = status, swipe left/right = display mode, long press = menu
+    // (in the menu: swipe up/down = choose, swipe left/right = change, tap = select).
     private GestureDetector gestures;
 
     @Override
@@ -654,13 +818,26 @@ public class MainActivity extends Activity implements CastServer.Handler {
 
                 @Override
                 public boolean onSingleTapConfirmed(MotionEvent e) {
-                    toggleStatus();
+                    if (menuOpen) menuSelect();
+                    else toggleStatus();
                     return true;
                 }
 
                 @Override
+                public void onLongPress(MotionEvent e) {
+                    if (!menuOpen) setMenu(true);
+                }
+
+                @Override
                 public boolean onFling(MotionEvent a, MotionEvent b, float vx, float vy) {
-                    if (a == null || Math.abs(vx) < Math.abs(vy) || Math.abs(b.getX() - a.getX()) < 120) return false;
+                    if (a == null) return false;
+                    boolean sideways = Math.abs(vx) >= Math.abs(vy);
+                    if (menuOpen) {
+                        if (sideways) menuChange(vx > 0 ? 1 : -1);
+                        else menuMove(vy > 0 ? 1 : -1);
+                        return true;
+                    }
+                    if (!sideways || Math.abs(b.getX() - a.getX()) < 120) return false;
                     cycleMode(vx < 0 ? 1 : -1);
                     return true;
                 }
@@ -681,8 +858,38 @@ public class MainActivity extends Activity implements CastServer.Handler {
         }
     }
 
+    private boolean okHeld;
+
     @Override
     public boolean dispatchKeyEvent(KeyEvent event) {
+        int key = event.getKeyCode();
+        boolean ok = key == KeyEvent.KEYCODE_DPAD_CENTER || key == KeyEvent.KEYCODE_ENTER || key == KeyEvent.KEYCODE_NUMPAD_ENTER;
+        // Holding OK opens the menu (many projector remotes have no Menu key).
+        if (ok && okHeld) {
+            if (event.getAction() == KeyEvent.ACTION_UP) okHeld = false;
+            return true;
+        }
+        if (ok && !menuOpen && event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() > 0
+                && event.getEventTime() - event.getDownTime() >= 600) {
+            okHeld = true;
+            menuRow = 0;
+            setMenu(true);
+            return true;
+        }
+        if (ok && event.getAction() == KeyEvent.ACTION_DOWN) return true; // acted on when released
+        String media = mediaKey(key);
+        if (media != null) {
+            if (event.getAction() == KeyEvent.ACTION_UP) sendToPc(media);
+            return true;
+        }
+        if (menuOpen && menuKey(event)) return true;
+        if (key == KeyEvent.KEYCODE_MENU || key == KeyEvent.KEYCODE_SETTINGS) {
+            if (event.getAction() == KeyEvent.ACTION_UP) {
+                menuRow = 0;
+                setMenu(true);
+            }
+            return true;
+        }
         if (event.getKeyCode() == KeyEvent.KEYCODE_BACK) {
             if (event.getAction() == KeyEvent.ACTION_UP) {
                 if (SystemClock.uptimeMillis() - lastBackPress < 2000) {

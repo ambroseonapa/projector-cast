@@ -7,6 +7,11 @@ let sources = [];
 let selectedId = null;
 let session = null;
 let filter = '';
+let remoteKeyTimer = null;
+
+const REMOTE_KEY_NAMES = {
+  playpause: 'Play / pause', next: 'Next', previous: 'Previous', back: 'Back', forward: 'Forward',
+};
 
 function store(key, value) {
   try {
@@ -450,6 +455,13 @@ async function start() {
         $('liveQuality').value = key;
         $('quality').value = key;
         store('quality', key);
+      },
+      onRemoteKey: async (key) => {
+        const done = await window.cast.remoteKey(key).catch(() => false);
+        const name = REMOTE_KEY_NAMES[key] || key;
+        $('remoteKey').textContent = done ? `Projector remote: ${name}` : `Projector remote: ${name} (not available here)`;
+        clearTimeout(remoteKeyTimer);
+        remoteKeyTimer = setTimeout(() => { $('remoteKey').textContent = ''; }, 3000);
       },
       onEnded: (reason) => {
         session = null;

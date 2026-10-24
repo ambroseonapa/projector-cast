@@ -55,11 +55,26 @@ var statsEl = document.getElementById('stats');
 var canvas = document.getElementById('canvas');
 var ctx2d = canvas.getContext('2d');
 var displayMode = 1, painting = false;
+var control = null;
+
+// Picture settings from the projector menu, each -50..50. Sharpness is native-player only.
+function setPicture(brightness, contrast, colour) {
+  var f = 'brightness(' + (1 + brightness / 125) + ') contrast(' + (1 + contrast / 100) + ') saturate(' + (1 + colour / 50) + ')';
+  if (!brightness && !contrast && !colour) f = '';
+  video.style.filter = canvas.style.filter = f;
+}
+
+// Remote key for the PC; false if this connection has no control channel (older PC app).
+function sendControl(key) {
+  if (!control || control.readyState !== 'open') return false;
+  control.send(JSON.stringify({ key: key }));
+  return true;
+}
 
 function showInfo(code, ips, name, modeText, version) {
   document.getElementById('code').textContent = code;
   document.getElementById('ip').textContent = ips ? ('Projector address: ' + ips) : 'No network connection';
-  if (version) document.getElementById('version').textContent = 'v' + version + '  \u00b7  display mode ' + modeText + '  (\u25c0 \u25b6 to change)';
+  if (version) document.getElementById('version').textContent = 'v' + version + '  \u00b7  display mode ' + modeText + '  (\u25c0 \u25b6 to change)  \u00b7  hold OK: menu';
 }
 
 // How this page draws the picture when the projector app uses a web display mode
@@ -109,10 +124,11 @@ function closePc() {
   painting = false;
   clearTimeout(dropTimer);
   if (pc) {
-    pc.ontrack = pc.onaddstream = pc.oniceconnectionstatechange = null;
+    pc.ontrack = pc.onaddstream = pc.oniceconnectionstatechange = pc.ondatachannel = null;
     try { pc.close(); } catch (e) {}
     pc = null;
   }
+  control = null;
 }
 
 function stopCast(reason) {
@@ -241,6 +257,9 @@ function handleOffer(id, offerText, sender, senderIp) {
     stream = (ev.streams && ev.streams[0]) || stream || new MediaStream();
     if (stream.getTracks().indexOf(ev.track) < 0) stream.addTrack(ev.track);
     attachStream(stream);
+  };
+  conn.ondatachannel = function (ev) {
+    if (ev.channel.label === 'control' && pc === conn) control = ev.channel;
   };
   if (!('ontrack' in conn)) conn.onaddstream = function (ev) { attachStream(ev.stream); };
 

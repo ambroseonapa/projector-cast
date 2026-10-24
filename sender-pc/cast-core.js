@@ -138,7 +138,7 @@
 
   /**
    * One casting session: captures once and (re)connects to the projector as needed.
-   * events: onState(text, kind), onStats(text), onStream(stream), onQuality(key), onEnded(reason)
+   * events: onState(text, kind), onStats(text), onStream(stream), onQuality(key), onRemoteKey(key), onEnded(reason)
    */
   class CastSession {
     constructor(api, opts, events) {
@@ -223,6 +223,14 @@
       preferCodec(vt, this.opts.codec);
       const audioSenders = this.stream.getAudioTracks()
         .map((a) => pc.addTransceiver(a, { direction: 'sendonly', streams: [this.stream] }).sender);
+
+      // Remote-control keys pressed on the projector (play/pause, skip...).
+      const control = pc.createDataChannel('control');
+      control.onmessage = (ev) => {
+        let msg = null;
+        try { msg = JSON.parse(ev.data); } catch (_) { return; }
+        if (msg && typeof msg.key === 'string' && this.events.onRemoteKey && pc === this.pc) this.events.onRemoteKey(msg.key);
+      };
 
       pc.addEventListener('iceconnectionstatechange', () => this.onIce(pc));
 

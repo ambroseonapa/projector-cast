@@ -37,9 +37,24 @@ Projector remote:
 | OK | Show or hide status |
 | ◀ ▶ | Display mode: 1 Native (default), 2 Web, 3 Web (GPU layer), 4 Web (canvas) |
 | ▲ ▼ | Native decoder: hardware, hardware (buffered), software |
+| Menu, or hold OK | Menu: picture settings and PC controls |
+| ⏯ ⏮ ⏭ ⏪ ⏩ | Play/pause, previous, next, back, forward on the PC |
 | Back ×2 | Exit |
 
-On touch devices: tap to show or hide status, swipe left or right to change display mode.
+On touch devices: tap to show or hide status, swipe left or right to change display mode, long-press for the menu.
+
+### Picture settings
+
+The menu adjusts **Brightness**, **Contrast** and **Colour** (−50 to +50) and **Sharpness** (0 to 100). Settings are kept on the projector and apply to every cast. Sharpness works in display mode 1 only. **Reset picture** restores the defaults. On a still picture, a change shows once the next frame arrives.
+
+### Controlling the PC
+
+The PC section of the menu, or the media keys on the remote, control what is playing on the PC:
+
+- **Play / pause**, **Previous**, **Next** are sent as media keys and reach whichever app is playing (browsers, Spotify, VLC and others).
+- **Back** and **Forward** press ◀ / ▶ in the cast window, which seeks in most video players (YouTube: 5 s). When casting the entire screen they go to the active window.
+
+Windows is fully supported. On Linux, players that support MPRIS are controlled through `playerctl` (install it if needed). Not available on macOS yet. Volume is set with the projector's own volume keys, since the sound plays there.
 
 ### Second screen (Windows)
 
@@ -65,6 +80,7 @@ PC (Electron)                                   Projector (Android)
   UDP broadcast  "PCAST?<code>"  ────────────►  CastServer :47801
   HTTP POST /offer  ─────────────────────────►  CastServer :47800  →  NativePlayer or WebView
   WebRTC: H.264 / VP8 video, Opus stereo  ════►  SurfaceView / <video>
+  WebRTC data channel "control"  ◄────────────  remote keys {"key": "playpause"}
 ```
 
 | Path | Contents |

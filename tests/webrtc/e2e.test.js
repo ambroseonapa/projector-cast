@@ -233,6 +233,23 @@ async function run(browser, opts, label, gpu) {
     const same = await receiver.evaluate(() => window.__pc === pc && document.getElementById('video').videoWidth === 1280);
     assert(pcBefore && same, 'quality change kept the connection');
     console.log('PASS quality change applies without reconnecting');
+    // Projector remote keys reach the PC over the connection.
+    await sender.evaluate(() => { window.remoteKeys = []; window.session.events.onRemoteKey = (k) => window.remoteKeys.push(k); });
+    const keysSent = await receiver.evaluate(() => [sendControl('playpause'), sendControl('forward')]);
+    await receiver.waitForTimeout(500);
+    const got = await sender.evaluate(() => window.remoteKeys);
+    assert.deepStrictEqual(keysSent, [true, true], 'control channel open on the projector');
+    assert.deepStrictEqual(got, ['playpause', 'forward'], 'PC received the remote keys: ' + got);
+    console.log('PASS projector remote keys reach the PC');
+    // Picture settings apply to the web player; all at 0 removes the filter.
+    const filters = await receiver.evaluate(() => {
+      setPicture(10, -20, 25);
+      const on = getComputedStyle(document.getElementById('video')).filter;
+      setPicture(0, 0, 0);
+      return [on, getComputedStyle(document.getElementById('video')).filter];
+    });
+    assert(/brightness\(1\.08\) contrast\(0\.8\) saturate\(1\.5\)/.test(filters[0]) && filters[1] === 'none', 'picture filter: ' + filters);
+    console.log('PASS picture settings apply to the web player');
     await ctx.close();
   }
   console.log('PASS 720p30 (new default)');

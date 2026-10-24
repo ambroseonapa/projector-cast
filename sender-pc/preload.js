@@ -25,4 +25,5 @@ contextBridge.exposeInMainWorld('cast', {
   vddInstall: () => ipcRenderer.invoke('vdd-install'),
   vddSet: (on) => ipcRenderer.invoke('vdd-set', on),
   openDisplaySettings: () => ipcRenderer.invoke('open-display-settings'),
+  remoteKey: (key) => ipcRenderer.invoke('remote-key', key),
 });

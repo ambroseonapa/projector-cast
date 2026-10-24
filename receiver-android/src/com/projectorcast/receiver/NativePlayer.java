@@ -75,6 +75,8 @@ class NativePlayer {
     private final Listener listener;
     private final Context ctx;
     private final EglBase egl;
+    final PictureDrawer picture = new PictureDrawer();
+    private volatile DataChannel control;
     private PeerConnectionFactory factory;
     private JavaAudioDeviceModule adm;
     private int strategy;
@@ -99,7 +101,7 @@ class NativePlayer {
         this.view = view;
         this.listener = listener;
         egl = EglBase.create();
-        view.init(egl.getEglBaseContext(), null);
+        view.init(egl.getEglBaseContext(), null, EglBase.CONFIG_PLAIN, picture);
         view.setScalingType(RendererCommon.ScalingType.SCALE_ASPECT_FIT);
         view.setEnableHardwareScaler(false);
         view.setMirror(false);
@@ -202,6 +204,7 @@ class NativePlayer {
         }
         videoTrack = null;
         gate = null;
+        control = null; // disposed with the connection
         if (old != null) old.dispose();
         view.clearImage();
     }
@@ -288,6 +291,14 @@ class NativePlayer {
                 });
             }
         }
+    }
+
+    /** Sends a remote key to the PC; false if this connection has no control channel (older PC app). */
+    boolean sendControl(String key) {
+        DataChannel ch = control;
+        if (ch == null || ch.state() != DataChannel.State.OPEN) return false;
+        byte[] msg = ("{\"key\":" + CastServer.quote(key) + "}").getBytes(java.nio.charset.Charset.forName("UTF-8"));
+        return ch.send(new DataChannel.Buffer(java.nio.ByteBuffer.wrap(msg), false));
     }
 
     boolean active() {
@@ -471,7 +482,9 @@ class NativePlayer {
         public void onIceCandidatesRemoved(IceCandidate[] c) { }
         public void onAddStream(MediaStream s) { }
         public void onRemoveStream(MediaStream s) { }
-        public void onDataChannel(DataChannel d) { }
+        public void onDataChannel(DataChannel d) {
+            if ("control".equals(d.label()) && current()) control = d;
+        }
         public void onRenegotiationNeeded() { }
     }
 
