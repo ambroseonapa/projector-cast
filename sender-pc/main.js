@@ -68,9 +68,10 @@ const settings = readSettings();
 
 // Use real LAN addresses in WebRTC instead of random .local names; both sides are on the same network.
 const disabledFeatures = ['WebRtcHideLocalIpsWithMdns'];
-// "Compatibility" capture: skip Windows Graphics Capture and use the older desktop-duplication path.
-// Fixes black/flashing frames from video players that draw in hardware overlays.
-if (settings.captureMethod === 'compat') disabledFeatures.push('AllowWgcScreenCapturer', 'AllowWgcWindowCapturer', 'AllowWgcDesktopCapturer');
+// "Compatibility" capture: the whole screen uses the older desktop-duplication path instead of Windows
+// Graphics Capture (fixes black/flashing frames from hardware video overlays). Windows always keep
+// Graphics Capture: the old window path can't see video a browser draws with the graphics card.
+if (settings.captureMethod === 'compat') disabledFeatures.push('AllowWgcScreenCapturer', 'AllowWgcDesktopCapturer');
 app.commandLine.appendSwitch('disable-features', disabledFeatures.join(','));
 app.commandLine.appendSwitch('disable-renderer-backgrounding');
 app.commandLine.appendSwitch('disable-background-timer-throttling');

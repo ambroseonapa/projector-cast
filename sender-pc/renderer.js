@@ -56,7 +56,7 @@ async function copyReport() {
     ...((p.events || []).length ? p.events : ['(none)']),
   ];
   await window.cast.copyText(lines.join('\n'));
-  showNote('Report copied. Paste it into the chat with Claude.');
+  showNote('Report copied.');
 }
 
 
@@ -229,7 +229,7 @@ async function init() {
   $('copyReport').addEventListener('click', copyReport);
   $('copyLast').addEventListener('click', copyReport);
   window.cast.onUpdateReady((version) => {
-    $('pcUpdateText').textContent = `Projector Cast ${version} is ready. It installs when you close the app, or now:`;
+    $('pcUpdateText').textContent = `Update ${version} ready — installs when you close the app.`;
     $('pcUpdate').hidden = false;
   });
   $('pcUpdateNow').addEventListener('click', () => {

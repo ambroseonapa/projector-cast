@@ -242,9 +242,12 @@ class NativePlayer {
                 for (RTCStats st : report.getStatsMap().values()) {
                     Map<String, Object> m = st.getMembers();
                     if (!"inbound-rtp".equals(st.getType()) || !"video".equals(m.get("kind"))) continue;
+                    // Frames the decoder stalls on show up as "dropped", not "received": count both.
                     Object fr = m.get("framesReceived");
+                    Object dropped = m.get("framesDropped");
                     if (!(fr instanceof Number)) fr = m.get("packetsReceived");
-                    if (fr instanceof Number) received = ((Number) fr).longValue();
+                    if (fr instanceof Number) received = ((Number) fr).longValue()
+                            + (dropped instanceof Number ? ((Number) dropped).longValue() : 0);
                 }
                 long rendered = g != null ? g.count : 0;
                 boolean stuckNow = lastReceived >= 0 && received - lastReceived >= 3 && rendered == lastRendered;
@@ -362,7 +365,11 @@ class NativePlayer {
                 Object impl = m.get("decoderImplementation");
                 b.append("Decoder   ").append(codecName.replace("video/", "")).append(impl != null ? "  " + impl : "").append('\n');
                 FrameGate g = gate;
-                double arriving = perSec(prev, "vrecv", m.get("framesReceived"), ts);
+                Object recv = m.get("framesReceived");
+                Object drop = m.get("framesDropped");
+                double arriving = perSec(prev, "vrecv", recv instanceof Number
+                        ? (Object) Double.valueOf(((Number) recv).doubleValue() + (drop instanceof Number ? ((Number) drop).doubleValue() : 0))
+                        : null, ts);
                 double shown = perSec(prev, "vshown", g != null ? (Object) Long.valueOf(g.count) : null, ts);
                 b.append("Frames/s  arriving ").append(fmt(arriving, 0)).append("  decoded ").append(fmt(fps, 0))
                         .append("  shown ").append(fmt(shown, 0)).append('\n');

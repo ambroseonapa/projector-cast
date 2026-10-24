@@ -98,6 +98,8 @@ const RECEIVER = 'file://' + path.resolve(__dirname, '../../receiver-android/ass
   console.log('PASS PC preview shows what is sent');
   await win.waitForFunction(() => /Web standard/.test(document.getElementById('projStats').textContent), null, { timeout: 10000 });
   await win.waitForTimeout(4500);
+  await win.click('#liveAdvanced summary');
+  assert.strictEqual(await win.textContent('#copyReport'), 'Copy report');
   await win.click('#copyReport');
   const report = await app.evaluate(({ clipboard }) => clipboard.readText());
   assert(/Projector Cast report/.test(report) && /PC: \d+×\d+/.test(report) && /Projector: .*Picture/.test(report) && /offer from TEST/.test(report),
@@ -213,6 +215,7 @@ const RECEIVER = 'file://' + path.resolve(__dirname, '../../receiver-android/ass
   const win2 = await app2.firstWindow();
   await win2.waitForFunction(() => document.querySelectorAll('#picker .pick-card').length > 0);
   assert(/AllowWgcScreenCapturer/.test(flags) && /WebRtcHideLocalIpsWithMdns/.test(flags), flags);
+  assert(!/AllowWgcWindowCapturer/.test(flags), 'window capture keeps Windows Graphics Capture: ' + flags);
   assert.strictEqual(await win2.inputValue('#capture'), 'compat');
   console.log('PASS compatibility capture method is applied after restart: ' + flags);
   await app2.close();
