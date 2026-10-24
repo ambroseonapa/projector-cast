@@ -4,6 +4,8 @@ const { chromium, _electron } = require(process.env.PLAYWRIGHT_DIR || 'playwrigh
 const http = require('http');
 const path = require('path');
 const assert = require('assert');
+const fs = require('fs');
+const APK = path.resolve(__dirname, '../../dist/ProjectorCast.apk');
 
 const APP = path.resolve(__dirname, '../../sender-pc');
 const RECEIVER = 'file://' + path.resolve(__dirname, '../../receiver-android/assets/receiver.html');
@@ -18,6 +20,7 @@ const RECEIVER = 'file://' + path.resolve(__dirname, '../../receiver-android/ass
   await receiver.goto(RECEIVER);
   await receiver.evaluate(() => showInfo('482193', '127.0.0.1', 'Relay Projector'));
   const seenIps = [];
+  let updateSeen = null;
 
   // Stand-in for MainActivity: what it does with evaluateJavascript + the Cast bridge.
   http.createServer((req, res) => {
@@ -25,6 +28,7 @@ const RECEIVER = 'file://' + path.resolve(__dirname, '../../receiver-android/ass
     req.on('data', (c) => { body += c; });
     req.on('end', async () => {
       try {
+        if (req.url === '/update') { updateSeen = JSON.parse(body); res.end('{}'); return; }
         if (req.url === '/stop') { await receiver.evaluate(() => stopCast('The PC stopped casting')); res.end('{}'); return; }
         const { offer, sender, ip } = JSON.parse(body);
         seenIps.push(ip);
@@ -49,7 +53,9 @@ const RECEIVER = 'file://' + path.resolve(__dirname, '../../receiver-android/ass
   win.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
   await win.waitForSelector('.screen');
   const screens = await win.locator('.screen').count();
-  console.log(`PASS app window opened, ${screens} screen(s) listed`);
+  const groups = await win.locator('.group').allTextContents();
+  assert(groups.includes('Whole screen'), 'grouped picker: ' + groups);
+  console.log(`PASS app window opened, ${screens} source(s) listed under ${groups.join(' / ')}`);
   await win.screenshot({ path: path.join(__dirname, 'out-app-idle.png') });
 
   // Wrong code first: should say not found, quickly enough.
@@ -68,11 +74,21 @@ const RECEIVER = 'file://' + path.resolve(__dirname, '../../receiver-android/ass
 
   await win.selectOption('#quality', 'p1080_60');
   await win.click('#start');
+  // Relay projector reports version 2; this PC app carries version 3, so it offers the update first.
+  await win.waitForSelector('#update:not([hidden])', { timeout: 10000 });
+  const offerText = await win.textContent('#updateText');
+  assert(/2 → 3/.test(offerText), offerText);
+  console.log('PASS out-of-date projector app detected: "' + offerText + '"');
+  await win.screenshot({ path: path.join(__dirname, 'out-app-update.png') });
+  await win.click('#updateSkip');
   await win.waitForFunction(() => document.getElementById('dot').classList.contains('live'), null, { timeout: 20000 });
   console.log('PASS casting: "' + await win.textContent('#state') + '"');
   await receiver.waitForTimeout(5000);
   const stats = await win.textContent('#stats');
   console.log('     PC stats: ' + stats);
+  const preview = await win.evaluate(() => { const v = document.getElementById('preview'); return { w: v.videoWidth, t: v.currentTime }; });
+  assert(preview.w > 0 && preview.t > 1, 'PC preview plays: ' + JSON.stringify(preview));
+  console.log('PASS PC preview shows what is sent');
   await win.screenshot({ path: path.join(__dirname, 'out-app-live.png') });
 
   const rx = await receiver.evaluate(() => {
@@ -87,11 +103,64 @@ const RECEIVER = 'file://' + path.resolve(__dirname, '../../receiver-android/ass
   await receiver.waitForFunction(() => getComputedStyle(document.getElementById('idle')).display === 'flex', null, { timeout: 5000 });
   assert(await win.isVisible('#setup'), 'PC app back to setup');
   console.log('PASS stop returns both sides to the start screen');
+
+  await win.click('#start');
+  await win.waitForSelector('#update:not([hidden])', { timeout: 10000 });
+  await win.click('#updateNow');
+  await win.waitForFunction(() => /Update sent/.test(document.getElementById('error').textContent), null, { timeout: 30000 });
+  assert(updateSeen && updateSeen.pk && updateSeen.bytes === fs.statSync(APK).size, 'projector received the whole APK: ' + JSON.stringify(updateSeen));
+  console.log(`PASS "Update the projector app" delivered the ${updateSeen.bytes}-byte APK`);
+
+  // Cast one window only.
+  await app.evaluate(({ BrowserWindow }) => {
+    const w = new BrowserWindow({ width: 800, height: 600, x: 900, y: 100, title: 'Match Window', show: true });
+    w.loadURL('data:text/html,<title>Match Window</title><body style="margin:0;background:%2300a050"><h1 style="color:white">MATCH</h1>');
+  });
+  await win.waitForTimeout(1500);
+  await win.evaluate(() => loadScreens());
+  await win.waitForTimeout(500);
+  const names = await win.locator('.screen span').allTextContents();
+  const groups2 = await win.locator('.group').allTextContents();
+  assert(names.includes('Match Window') && groups2.includes('One window'), 'window listed: ' + names + ' / ' + groups2);
+  assert(!names.includes('Projector Cast'), 'own window is not offered');
+  await win.locator('.screen', { hasText: 'Match Window' }).click();
+  await win.click('#start');
+  await win.waitForSelector('#update:not([hidden])', { timeout: 10000 });
+  await win.click('#updateSkip');
+  await win.waitForFunction(() => document.getElementById('dot').classList.contains('live'), null, { timeout: 20000 });
+  await receiver.waitForTimeout(3000);
+  const one = await receiver.evaluate(() => {
+    const v = document.getElementById('video');
+    const c = document.createElement('canvas'); c.width = v.videoWidth; c.height = v.videoHeight;
+    const g = c.getContext('2d'); g.drawImage(v, 0, 0);
+    const px = g.getImageData(Math.floor(c.width / 2), Math.floor(c.height * 0.8), 1, 1).data;
+    return { w: v.videoWidth, h: v.videoHeight, px: [px[0], px[1], px[2]] };
+  });
+  assert(one.w < 1000 && one.h < 800 && one.px[1] > 120 && one.px[0] < 60, 'projector shows only the green window: ' + JSON.stringify(one));
+  console.log(`PASS casting one window: projector shows just that window (${one.w}x${one.h})`);
+  await receiver.screenshot({ path: path.join(__dirname, 'out-projector-window.png') });
+  await win.click('#stop');
+  await receiver.waitForFunction(() => getComputedStyle(document.getElementById('idle')).display === 'flex', null, { timeout: 5000 });
+
+  const userData = await app.evaluate(({ app: a }) => a.getPath('userData'));
+  assert.strictEqual(await win.inputValue('#capture'), 'auto');
   assert(seenIps.every((ip) => /^\d+\.\d+\.\d+\.\d+$/.test(ip)), 'PC address passed to receiver: ' + seenIps);
   assert.deepStrictEqual(errors, [], 'no errors in the app window');
   console.log('PASS no errors in the PC app');
 
   await app.close();
+
+  // Compatibility capture method is applied at start-up.
+  fs.writeFileSync(path.join(userData, 'settings.json'), JSON.stringify({ captureMethod: 'compat' }));
+  const app2 = await _electron.launch({ executablePath: path.join(APP, 'node_modules/electron/dist/electron'), args: [APP, '--no-sandbox'] });
+  const flags = await app2.evaluate(({ app: a }) => a.commandLine.getSwitchValue('disable-features'));
+  const win2 = await app2.firstWindow();
+  await win2.waitForSelector('.screen');
+  assert(/AllowWgcScreenCapturer/.test(flags) && /WebRtcHideLocalIpsWithMdns/.test(flags), flags);
+  assert.strictEqual(await win2.inputValue('#capture'), 'compat');
+  console.log('PASS compatibility capture method is applied after restart: ' + flags);
+  await app2.close();
+  fs.unlinkSync(path.join(userData, 'settings.json'));
   await browser.close();
   console.log('ALL ELECTRON APP TESTS PASSED');
   process.exit(0);

@@ -3,6 +3,7 @@
 const { app, BrowserWindow, ipcMain, desktopCapturer, session, powerSaveBlocker, shell } = require('electron');
 const dgram = require('dgram');
 const http = require('http');
+const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
@@ -39,8 +40,19 @@ function createWindow() {
   });
 }
 
+// Settings that must be applied before the app starts (changing them restarts the app).
+const settingsFile = path.join(app.getPath('userData'), 'settings.json');
+function readSettings() {
+  try { return JSON.parse(fs.readFileSync(settingsFile, 'utf8')); } catch (_) { return {}; }
+}
+const settings = readSettings();
+
 // Use real LAN addresses in WebRTC instead of random .local names; both sides are on the same network.
-app.commandLine.appendSwitch('disable-features', 'WebRtcHideLocalIpsWithMdns');
+const disabledFeatures = ['WebRtcHideLocalIpsWithMdns'];
+// "Compatibility" capture: skip Windows Graphics Capture and use the older desktop-duplication path.
+// Fixes black/flashing frames from video players that draw in hardware overlays.
+if (settings.captureMethod === 'compat') disabledFeatures.push('AllowWgcScreenCapturer', 'AllowWgcWindowCapturer', 'AllowWgcDesktopCapturer');
+app.commandLine.appendSwitch('disable-features', disabledFeatures.join(','));
 app.commandLine.appendSwitch('disable-renderer-backgrounding');
 app.commandLine.appendSwitch('disable-background-timer-throttling');
 
@@ -48,7 +60,7 @@ app.whenReady().then(() => {
   // getDisplayMedia() in the page lands here: hand back the chosen screen, plus system sound on Windows.
   session.defaultSession.setDisplayMediaRequestHandler(async (request, callback) => {
     try {
-      const sources = await desktopCapturer.getSources({ types: ['screen'] });
+      const sources = await desktopCapturer.getSources({ types: ['screen', 'window'] });
       const source = sources.find((s) => s.id === chosenScreenId) || sources[0];
       if (!source) return callback({});
       const streams = { video: source };
@@ -64,8 +76,46 @@ app.whenReady().then(() => {
 app.on('window-all-closed', () => app.quit());
 
 ipcMain.handle('list-screens', async () => {
-  const sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 240, height: 135 } });
-  return sources.map((s, i) => ({ id: s.id, name: s.name || `Screen ${i + 1}`, thumb: s.thumbnail.toDataURL() }));
+  const sources = await desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 240, height: 135 } });
+  const ownTitle = win ? win.getTitle() : 'Projector Cast';
+  return sources
+    .filter((s) => !(s.id.startsWith('window:') && (s.name === ownTitle || !s.name)))
+    .map((s, i) => ({
+      id: s.id,
+      kind: s.id.startsWith('screen:') ? 'screen' : 'window',
+      name: s.name || `Screen ${i + 1}`,
+      thumb: s.thumbnail.toDataURL(),
+    }));
+});
+
+ipcMain.handle('get-settings', () => ({ captureMethod: settings.captureMethod || 'auto' }));
+
+ipcMain.handle('set-capture-method', (_e, method) => {
+  const next = { ...readSettings(), captureMethod: method === 'compat' ? 'compat' : 'auto' };
+  fs.mkdirSync(path.dirname(settingsFile), { recursive: true });
+  fs.writeFileSync(settingsFile, JSON.stringify(next));
+  app.relaunch();
+  app.exit(0);
+});
+
+// The projector app ships inside this PC app, so updating the PC app is enough: it pushes the
+// newer projector app over the network when it connects.
+function bundledApk() {
+  const dir = app.isPackaged ? process.resourcesPath : path.join(__dirname, '..', 'dist');
+  const file = path.join(dir, 'ProjectorCast.apk');
+  try {
+    const version = parseInt(fs.readFileSync(path.join(dir, 'ProjectorCast.version'), 'utf8'), 10);
+    if (fs.existsSync(file) && version > 0) return { file, version };
+  } catch (_) { /* no bundled APK */ }
+  return null;
+}
+
+ipcMain.handle('bundled-apk-version', () => { const b = bundledApk(); return b ? b.version : 0; });
+
+ipcMain.handle('push-update', async (_e, { ip, code }) => {
+  const b = bundledApk();
+  if (!b) throw new Error('This PC app has no projector update inside it');
+  return request(ip, 'POST', '/update', code, fs.readFileSync(b.file), 120000, 'application/vnd.android.package-archive');
 });
 
 ipcMain.handle('prepare-capture', (_e, opts) => {
@@ -128,7 +178,7 @@ ipcMain.handle('find-projector', (_e, code) => new Promise((resolve) => {
   });
 }));
 
-function request(ip, method, urlPath, code, body, timeoutMs) {
+function request(ip, method, urlPath, code, body, timeoutMs, contentType) {
   return new Promise((resolve, reject) => {
     const data = body ? Buffer.from(body) : null;
     const req = http.request({
@@ -137,7 +187,7 @@ function request(ip, method, urlPath, code, body, timeoutMs) {
       method,
       path: urlPath,
       headers: {
-        'Content-Type': 'application/json',
+        'Content-Type': contentType || 'application/json',
         'X-Cast-Code': code || '',
         'X-Cast-Sender': os.hostname().replace(/[^\w .-]/g, '').slice(0, 40) || 'PC',
         ...(data ? { 'Content-Length': data.length } : {}),

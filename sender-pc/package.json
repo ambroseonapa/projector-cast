@@ -1,7 +1,7 @@
 {
   "name": "projector-cast",
   "productName": "Projector Cast",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Mirror your PC screen and sound to an Android TV projector with a code.",
   "main": "main.js",
   "private": true,
@@ -12,11 +12,34 @@
   "build": {
     "appId": "com.projectorcast.sender",
     "productName": "Projector Cast",
-    "files": ["main.js", "preload.js", "cast-core.js", "renderer.js", "index.html", "style.css"],
-    "directories": { "output": "../dist/pc" },
+    "files": [
+      "main.js",
+      "preload.js",
+      "cast-core.js",
+      "renderer.js",
+      "index.html",
+      "style.css"
+    ],
+    "directories": {
+      "output": "../dist/pc"
+    },
     "artifactName": "ProjectorCast-${version}-${arch}.${ext}",
-    "win": { "signAndEditExecutable": false },
-    "portable": { "artifactName": "ProjectorCast.exe" }
+    "win": {
+      "signAndEditExecutable": false
+    },
+    "portable": {
+      "artifactName": "ProjectorCast.exe"
+    },
+    "extraResources": [
+      {
+        "from": "../dist/ProjectorCast.apk",
+        "to": "ProjectorCast.apk"
+      },
+      {
+        "from": "../dist/ProjectorCast.version",
+        "to": "ProjectorCast.version"
+      }
+    ]
   },
   "devDependencies": {
     "electron": "33.2.1",

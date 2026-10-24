@@ -2,8 +2,10 @@ package com.projectorcast.receiver;
 
 import android.app.Activity;
 import android.content.Context;
+import android.content.Intent;
 import android.content.SharedPreferences;
 import android.graphics.Color;
+import android.net.Uri;
 import android.net.wifi.WifiManager;
 import android.os.Build;
 import android.os.Bundle;
@@ -20,6 +22,8 @@ import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.Toast;
 
+import java.io.File;
+import java.io.FileOutputStream;
 import java.net.Inet4Address;
 import java.net.InetAddress;
 import java.net.NetworkInterface;
@@ -84,7 +88,8 @@ public class MainActivity extends Activity implements CastServer.Handler {
             multicastLock.acquire();
         }
 
-        server = new CastServer(code, deviceName(), this);
+        applyDisplayMode(prefs().getInt("displayMode", 1));
+        server = new CastServer(code, deviceName(), versionCode(), this);
         try {
             server.start();
         } catch (Exception e) {
@@ -107,7 +112,25 @@ public class MainActivity extends Activity implements CastServer.Handler {
         if (!pageReady) return;
         lastIps = localIps();
         js("showInfo(" + CastServer.quote(code) + "," + CastServer.quote(lastIps) + ","
-                + CastServer.quote(deviceName()) + ")");
+                + CastServer.quote(deviceName()) + "," + prefs().getInt("displayMode", 1) + ","
+                + CastServer.quote(versionName()) + ")");
+    }
+
+    private SharedPreferences prefs() {
+        return getSharedPreferences("cast", MODE_PRIVATE);
+    }
+
+    private int versionCode() {
+        try { return getPackageManager().getPackageInfo(getPackageName(), 0).versionCode; } catch (Exception e) { return 0; }
+    }
+
+    private String versionName() {
+        try { return getPackageManager().getPackageInfo(getPackageName(), 0).versionName; } catch (Exception e) { return "?"; }
+    }
+
+    /** 2 = "GPU layer" mode: the whole WebView is drawn into its own hardware layer (fixes flicker on some chips). */
+    private void applyDisplayMode(int mode) {
+        if (web != null) web.setLayerType(mode == 2 ? View.LAYER_TYPE_HARDWARE : View.LAYER_TYPE_NONE, null);
     }
 
     private String loadCode() {
@@ -181,7 +204,47 @@ public class MainActivity extends Activity implements CastServer.Handler {
         js("stopCast('The PC stopped casting')");
     }
 
+    @Override
+    public void onUpdate(byte[] apk) throws Exception {
+        if (apk.length < 4 || apk[0] != 'P' || apk[1] != 'K') throw new Exception("not an APK");
+        File dir = getExternalCacheDir();
+        File file;
+        if (dir != null) {
+            file = new File(dir, "update.apk");
+            FileOutputStream out = new FileOutputStream(file);
+            try { out.write(apk); } finally { out.close(); }
+        } else {
+            // Readable by the system installer: allowed because this app targets API 23.
+            @SuppressWarnings("deprecation")
+            FileOutputStream out = openFileOutput("update.apk", MODE_WORLD_READABLE);
+            try { out.write(apk); } finally { out.close(); }
+            file = getFileStreamPath("update.apk");
+        }
+        final Uri uri = Uri.fromFile(file);
+        ui.post(new Runnable() {
+            public void run() {
+                js("stopCast('Installing the update...')");
+                Intent i = new Intent(Intent.ACTION_VIEW);
+                i.setDataAndType(uri, "application/vnd.android.package-archive");
+                i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                try {
+                    startActivity(i);
+                } catch (Exception e) {
+                    Toast.makeText(MainActivity.this, "Could not open the installer: " + e.getMessage(), Toast.LENGTH_LONG).show();
+                }
+            }
+        });
+    }
+
     private class Bridge {
+        @JavascriptInterface
+        public void setDisplayMode(final int mode) {
+            prefs().edit().putInt("displayMode", mode).apply();
+            ui.post(new Runnable() {
+                public void run() { applyDisplayMode(mode); }
+            });
+        }
+
         @JavascriptInterface
         public void answer(int id, String answerJson, String error) {
             synchronized (MainActivity.this) {
@@ -228,6 +291,10 @@ public class MainActivity extends Activity implements CastServer.Handler {
         if (code == KeyEvent.KEYCODE_DPAD_CENTER || code == KeyEvent.KEYCODE_ENTER
                 || code == KeyEvent.KEYCODE_NUMPAD_ENTER || code == KeyEvent.KEYCODE_INFO) {
             if (event.getAction() == KeyEvent.ACTION_UP) js("toggleStats()");
+            return true;
+        }
+        if (code == KeyEvent.KEYCODE_DPAD_LEFT || code == KeyEvent.KEYCODE_DPAD_RIGHT) {
+            if (event.getAction() == KeyEvent.ACTION_UP) js("cycleMode(" + (code == KeyEvent.KEYCODE_DPAD_RIGHT ? 1 : -1) + ")");
             return true;
         }
         return super.dispatchKeyEvent(event);

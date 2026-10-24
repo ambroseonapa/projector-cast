@@ -171,6 +171,7 @@
       });
       const v = this.stream.getVideoTracks()[0];
       if (!v) throw new Error('No screen was captured');
+      if (this.events.onStream) this.events.onStream(this.stream);
       if ('contentHint' in v) v.contentHint = this.opts.content === 'detail' ? 'detail' : 'motion';
       v.addEventListener('ended', () => this.stop('Screen sharing was stopped'));
       for (const a of this.stream.getAudioTracks()) if ('contentHint' in a) a.contentHint = 'music';
@@ -197,7 +198,8 @@
       await waitForIce(pc, 2500);
       if (pc !== this.pc) return;
 
-      const answer = await this.api.sendOffer(this.opts.ip, this.opts.code, { type: 'offer', sdp: pc.localDescription.sdp });
+      const answer = await this.api.sendOffer(this.opts.ip, this.opts.code,
+        { type: 'offer', sdp: pc.localDescription.sdp, buffer: this.opts.buffer == null ? 150 : this.opts.buffer });
       if (pc !== this.pc) return;
       await pc.setRemoteDescription({ type: 'answer', sdp: tuneAnswer(unhideAddresses(answer.sdp, this.opts.ip), this.q.kbps) });
       await this.tuneSender(vt.sender);

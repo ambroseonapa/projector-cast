@@ -6,7 +6,7 @@ const assert = require('assert');
 
 const handlers = {};
 const fakeElectron = {
-  app: { whenReady: () => new Promise(() => {}), on() {}, commandLine: { appendSwitch() {} } },
+  app: { whenReady: () => new Promise(() => {}), on() {}, commandLine: { appendSwitch() {} }, getPath: () => require('os').tmpdir(), isPackaged: false },
   BrowserWindow: function () {},
   ipcMain: { handle: (name, fn) => { handlers[name] = fn; } },
   desktopCapturer: {}, session: {}, shell: {},

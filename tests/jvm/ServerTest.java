@@ -41,13 +41,15 @@ public class ServerTest {
     public static void main(String[] a) throws Exception {
         final String[] seen = new String[2];
         final boolean[] stopped = {false};
-        CastServer server = new CastServer("482193", "Smart \"Projector\"", new CastServer.Handler() {
+        final byte[][] apk = {null};
+        CastServer server = new CastServer("482193", "Smart \"Projector\"", 7, new CastServer.Handler() {
             public String onOffer(String offer, String sender, String ip) throws Exception {
                 seen[0] = offer; seen[1] = sender;
                 if (offer.contains("explode")) throw new Exception("receiver said no");
                 return "{\"type\":\"answer\",\"sdp\":\"v=0\"}";
             }
             public void onStop() { stopped[0] = true; }
+            public void onUpdate(byte[] b) { apk[0] = b; }
         });
         server.start();
 
@@ -56,7 +58,7 @@ public class ServerTest {
         check(udp("hello") == null, "discovery ignores junk");
 
         String[] r = http("GET", "/ping", null, null);
-        check(r[0].equals("200") && r[1].equals("{\"ok\":true,\"name\":\"Smart \\\"Projector\\\"\"}"), "ping returns escaped name: " + r[1]);
+        check(r[0].equals("200") && r[1].equals("{\"ok\":true,\"name\":\"Smart \\\"Projector\\\"\",\"version\":7}"), "ping returns escaped name and version: " + r[1]);
         check("*".equals(r[2]), "CORS header present");
 
         r = http("POST", "/offer", "111111", "{\"type\":\"offer\"}");
@@ -87,6 +89,16 @@ public class ServerTest {
 
         r = http("POST", "/stop", "482193", "{}");
         check(r[0].equals("200") && stopped[0], "stop reaches the handler");
+
+        StringBuilder fakeApk = new StringBuilder("PK");
+        while (fakeApk.length() < 3 * 1024 * 1024) fakeApk.append("0123456789abcdef");
+        r = http("POST", "/update", "482193", fakeApk.toString());
+        check(r[0].equals("200") && apk[0] != null && apk[0].length == fakeApk.length(), "3 MB update arrives intact");
+        apk[0] = null;
+        boolean updRefused;
+        try { updRefused = http("POST", "/update", "999999", fakeApk.toString())[0].equals("403"); } catch (IOException e) { updRefused = true; }
+        check(updRefused && apk[0] == null, "update with wrong code is refused without reading it");
+        http("POST", "/stop", "482193", "{}"); // reset wrong-code counter
         r = http("GET", "/nothing", null, null);
         check(r[0].equals("404"), "unknown path is 404");
         r = http("OPTIONS", "/offer", null, null);

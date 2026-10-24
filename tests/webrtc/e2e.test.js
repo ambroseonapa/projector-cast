@@ -16,7 +16,7 @@ async function setup(browser) {
   const pending = {};
   let nextId = 1;
   await receiver.exposeFunction('__answer', (id, ans, err) => { const p = pending[id]; delete pending[id]; if (p) p(err ? { err } : { ans }); });
-  await receiver.addInitScript(() => { window.Cast = { answer: (id, a, e) => window.__answer(id, a, e) }; });
+  await receiver.addInitScript(() => { window.Cast = { answer: (id, a, e) => window.__answer(id, a, e), setDisplayMode: (m) => { window.__savedMode = m; } }; });
   await receiver.goto(RECEIVER);
   await receiver.evaluate(() => showInfo('482193', '192.168.1.50', 'Smart projector'));
 
@@ -98,6 +98,40 @@ async function run(browser, opts, label, gpu) {
   console.log('  [' + label + '] projector stats panel:\n    ' + panel.text.split('\n').join('\n    '));
   assert(panel.shown === 'block' && /Picture/.test(panel.text) && /Decoder/.test(panel.text) && /Sound .*stereo/.test(panel.text), 'stats panel works');
   assert(/Size changes 0/.test(panel.text), 'no picture size changes');
+
+  const want = opts.buffer == null ? 150 : opts.buffer;
+  const buffers = await receiver.evaluate(() => pc.getReceivers().map((r) => ('jitterBufferTarget' in r ? r.jitterBufferTarget : r.playoutDelayHint * 1000)));
+  assert(buffers.length === 2 && buffers.every((b) => Math.round(b) === want), 'receive buffer follows the PC setting: ' + buffers + ' want ' + want);
+
+  if (opts.checkModes) {
+    const look = () => receiver.evaluate(() => {
+      const c = document.getElementById('canvas');
+      let lit = 0;
+      if (getComputedStyle(c).display !== 'none' && c.width) {
+        const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+        for (let i = 0; i < d.length; i += 4 * 997) if (d[i] + d[i + 1] + d[i + 2] > 60) lit++;
+      }
+      const v = document.getElementById('video');
+      return { mode: displayMode, saved: window.__savedMode, videoShown: getComputedStyle(v).display !== 'none' && v.getBoundingClientRect().width > 100,
+        gpu: v.className === 'gpu', canvasShown: getComputedStyle(c).display !== 'none', lit, playing: !v.paused, t: v.currentTime };
+    });
+    await receiver.evaluate(() => cycleMode(1));
+    const m2 = await look();
+    assert(m2.mode === 2 && m2.saved === 2 && m2.videoShown && m2.gpu && !m2.canvasShown, 'mode 2 GPU layer: ' + JSON.stringify(m2));
+    await receiver.evaluate(() => cycleMode(1));
+    await receiver.waitForTimeout(1000);
+    const m3 = await look();
+    await receiver.waitForTimeout(1000);
+    const m3b = await look();
+    assert(m3.mode === 3 && m3.canvasShown && !m3.videoShown && m3.lit > 20 && m3b.t > m3.t + 0.5 && m3b.playing, 'mode 3 canvas paints the live picture: ' + JSON.stringify(m3) + JSON.stringify(m3b));
+    await receiver.evaluate(() => cycleMode(1));
+    const m1 = await look();
+    assert(m1.mode === 1 && m1.videoShown && !m1.canvasShown && !m1.gpu, 'back to mode 1: ' + JSON.stringify(m1));
+    await receiver.evaluate(() => cycleMode(-1));
+    assert.strictEqual((await look()).mode, 3, 'left arrow goes backwards');
+    await receiver.evaluate(() => cycleMode(1));
+    console.log('PASS display modes 1 (standard), 2 (GPU layer), 3 (canvas) all show the picture');
+  }
   console.log(`  [${label}] freezes=${s.freezes} dropped=${s.dropped}`);
   assert((s.freezes || 0) <= 1, 'at most one freeze: ' + s.freezes);
   assert(/\d+×\d+ · \d+ fps/.test(senderStats || ''), 'sender shows live stats');
@@ -146,7 +180,9 @@ async function run(browser, opts, label, gpu) {
   console.log('PASS hidden .local addresses replaced');
   await page.close();
 
-  await run(browser, { quality: 'p720_30', content: 'motion', codec: 'h264', audio: true }, '720p30 default');
+  await run(browser, { quality: 'p720_30', content: 'motion', codec: 'h264', audio: true, checkModes: true }, '720p30 default');
+  await run(browser, { quality: 'p720_30', content: 'motion', codec: 'h264', audio: true, buffer: 0 }, '720p30 lowest delay');
+  console.log('PASS lowest-delay setting reaches the projector');
   console.log('PASS 720p30 (new default)');
   await run(browser, { quality: 'p1080_60', content: 'motion', codec: 'h264', audio: true }, '1080p60 H264 motion');
   console.log('PASS 1080p60 / H.264 / sound');

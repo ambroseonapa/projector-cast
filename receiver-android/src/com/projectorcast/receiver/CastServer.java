@@ -24,6 +24,7 @@ import java.util.Map;
  *   GET  /ping                -> {"ok":true,"name":...}
  *   POST /offer  (X-Cast-Code) body = SDP offer JSON -> SDP answer JSON
  *   POST /stop   (X-Cast-Code) -> {"ok":true}
+ *   POST /update (X-Cast-Code) body = new APK -> {"ok":true}; Android then asks to install it
  */
 public class CastServer {
 
@@ -31,6 +32,7 @@ public class CastServer {
     public static final int DISCOVERY_PORT = 47801;
     private static final Charset UTF8 = Charset.forName("UTF-8");
     private static final int MAX_BODY = 512 * 1024;
+    private static final int MAX_APK = 60 * 1024 * 1024;
 
     public interface Handler {
         /**
@@ -40,10 +42,14 @@ public class CastServer {
         String onOffer(String offerJson, String senderName, String senderIp) throws Exception;
 
         void onStop();
+
+        /** A newer copy of this app pushed by the PC app. */
+        void onUpdate(byte[] apk) throws Exception;
     }
 
     private final String code;
     private final String name;
+    private final int version;
     private final Handler handler;
     private volatile boolean running;
     private ServerSocket http;
@@ -51,9 +57,10 @@ public class CastServer {
     private int wrongCodes;
     private long lockedUntil;
 
-    public CastServer(String code, String name, Handler handler) {
+    public CastServer(String code, String name, int version, Handler handler) {
         this.code = code;
         this.name = name;
+        this.version = version;
         this.handler = handler;
     }
 
@@ -139,11 +146,25 @@ public class CastServer {
                 if (c > 0) headers.put(line.substring(0, c).trim().toLowerCase(Locale.US), line.substring(c + 1).trim());
             }
 
+            if (method.equals("OPTIONS")) { respond(out, 204, ""); return; }
+            if (method.equals("GET") && path.equals("/ping")) {
+                respond(out, 200, "{\"ok\":true,\"name\":" + quote(name) + ",\"version\":" + version + "}");
+                return;
+            }
+            if (!method.equals("POST")) { respond(out, 404, "{\"error\":\"not found\"}"); return; }
+            // Check the code before reading anything big.
+            if (!codeAccepted(headers.get("x-cast-code"))) {
+                respond(out, 403, "{\"error\":\"wrong code\"}");
+                return;
+            }
+
             int len = 0;
             if (headers.containsKey("content-length")) {
                 try { len = Integer.parseInt(headers.get("content-length")); } catch (NumberFormatException e) { len = -1; }
             }
-            if (len < 0 || len > MAX_BODY) { respond(out, 413, "{\"error\":\"body too large\"}"); return; }
+            int limit = path.equals("/update") ? MAX_APK : MAX_BODY;
+            if (len < 0 || len > limit) { respond(out, 413, "{\"error\":\"body too large\"}"); return; }
+            if (path.equals("/update")) s.setSoTimeout(120000);
             byte[] body = new byte[len];
             int read = 0;
             while (read < len) {
@@ -151,17 +172,8 @@ public class CastServer {
                 if (n < 0) break;
                 read += n;
             }
+            if (read < len) { respond(out, 400, "{\"error\":\"body cut short\"}"); return; }
 
-            if (method.equals("OPTIONS")) { respond(out, 204, ""); return; }
-            if (method.equals("GET") && path.equals("/ping")) {
-                respond(out, 200, "{\"ok\":true,\"name\":" + quote(name) + "}");
-                return;
-            }
-            if (!method.equals("POST")) { respond(out, 404, "{\"error\":\"not found\"}"); return; }
-            if (!codeAccepted(headers.get("x-cast-code"))) {
-                respond(out, 403, "{\"error\":\"wrong code\"}");
-                return;
-            }
             if (path.equals("/offer")) {
                 String sender = headers.containsKey("x-cast-sender") ? headers.get("x-cast-sender") : "PC";
                 try {
@@ -174,6 +186,13 @@ public class CastServer {
             } else if (path.equals("/stop")) {
                 handler.onStop();
                 respond(out, 200, "{\"ok\":true}");
+            } else if (path.equals("/update")) {
+                try {
+                    handler.onUpdate(body);
+                    respond(out, 200, "{\"ok\":true}");
+                } catch (Exception e) {
+                    respond(out, 500, "{\"error\":" + quote(String.valueOf(e.getMessage())) + "}");
+                }
             } else {
                 respond(out, 404, "{\"error\":\"not found\"}");
             }

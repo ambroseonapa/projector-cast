@@ -16,11 +16,15 @@ public class RelayServer {
     }
 
     public static void main(String[] a) throws Exception {
-        new CastServer("482193", "Relay Projector", new CastServer.Handler() {
+        new CastServer("482193", "Relay Projector", Integer.parseInt(System.getProperty("version", "3")), new CastServer.Handler() {
             public String onOffer(String offer, String sender, String ip) throws Exception {
                 System.out.println("offer from " + sender + " @ " + ip);
                 return post("/offer", "{\"offer\":" + CastServer.quote(offer) + ",\"sender\":" + CastServer.quote(sender)
                         + ",\"ip\":" + CastServer.quote(ip) + "}");
+            }
+            public void onUpdate(byte[] b) throws Exception {
+                System.out.println("update " + b.length);
+                post("/update", "{\"bytes\":" + b.length + ",\"pk\":" + (b[0] == 'P' && b[1] == 'K') + "}");
             }
             public void onStop() {
                 System.out.println("stop");

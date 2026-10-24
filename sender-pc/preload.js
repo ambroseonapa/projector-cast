@@ -11,4 +11,8 @@ contextBridge.exposeInMainWorld('cast', {
   ping: (ip) => ipcRenderer.invoke('ping', ip),
   sendOffer: (ip, code, offer) => ipcRenderer.invoke('send-offer', { ip, code, offer }),
   sendStop: (ip, code) => ipcRenderer.invoke('send-stop', { ip, code }),
+  getSettings: () => ipcRenderer.invoke('get-settings'),
+  setCaptureMethod: (method) => ipcRenderer.invoke('set-capture-method', method),
+  bundledApkVersion: () => ipcRenderer.invoke('bundled-apk-version'),
+  pushUpdate: (ip, code) => ipcRenderer.invoke('push-update', { ip, code }),
 });

@@ -8,6 +8,11 @@
     font-family: "Roboto", "Segoe UI", sans-serif; }
   #video { position: fixed; top: 0; left: 0; right: 0; bottom: 0; width: 100%; height: 100%; object-fit: contain; background: #000;
     display: none; }
+  /* Display mode 2: draw the video in its own GPU layer. */
+  #video.gpu { -webkit-transform: translateZ(0); transform: translateZ(0); will-change: transform; }
+  /* Display mode 3: the video only decodes (and plays sound); frames are painted onto the canvas. */
+  #video.hidden-source { display: block !important; top: 0; left: 0; right: auto; bottom: auto; width: 2px; height: 2px; opacity: 0.01; }
+  #canvas { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: #000; display: none; }
   #idle { position: fixed; top: 0; left: 0; right: 0; bottom: 0; display: flex; flex-direction: column;
     align-items: center; justify-content: center; background: radial-gradient(circle at 50% 30%, #12324a, #05090e 70%); }
   .title { font-size: 3.2vw; letter-spacing: .08em; color: #8fc9ff; text-transform: uppercase; }
@@ -15,6 +20,7 @@
   #code { font-size: 13vw; font-weight: 700; letter-spacing: .12em; margin: 1vh 0 2vh; font-variant-numeric: tabular-nums; }
   .hint { font-size: 1.9vw; color: #9fb2c4; max-width: 70vw; text-align: center; line-height: 1.5; }
   #ip { margin-top: 3vh; font-size: 1.6vw; color: #6f8396; }
+  #version { position: fixed; right: 2vw; bottom: 2vh; font-size: 1.3vw; color: #4d6070; }
   #status { margin-top: 3vh; font-size: 2vw; color: #ffd27a; min-height: 2.5vw; }
   #stats { position: fixed; left: 2vw; bottom: 3vh; padding: 1.2vh 1.4vw; border-radius: 1vw;
     background: rgba(0,0,0,.72); font: 1.5vw/1.5 monospace; color: #d8f0ff; white-space: pre; display: none; }
@@ -24,6 +30,7 @@
 </head>
 <body>
 <video id="video" autoplay playsinline></video>
+<canvas id="canvas"></canvas>
 <div id="idle">
   <div class="title">Projector Cast</div>
   <div class="label">Connection code</div>
@@ -32,6 +39,7 @@
     The PC and projector must be on the same Wi-Fi / network.</div>
   <div id="ip"></div>
   <div id="status"></div>
+  <div id="version"></div>
 </div>
 <div id="badge"></div>
 <div id="stats"></div>
@@ -45,10 +53,51 @@ var statusEl = document.getElementById('status');
 var badgeTimer = null, dropTimer = null, statsTimer = null;
 var statsOn = false, reconnects = 0, sizeChanges = 0, lastSize = '', prev = {};
 var statsEl = document.getElementById('stats');
+var canvas = document.getElementById('canvas');
+var ctx2d = canvas.getContext('2d');
+var MODES = ['', 'Standard', 'GPU layer', 'Canvas'];
+var displayMode = 1, painting = false;
 
-function showInfo(code, ips, name) {
+function showInfo(code, ips, name, mode, version) {
   document.getElementById('code').textContent = code;
   document.getElementById('ip').textContent = ips ? ('Projector address: ' + ips) : 'No network connection';
+  if (mode) displayMode = mode;
+  if (version) document.getElementById('version').textContent = 'v' + version + '  \u00b7  display mode ' + displayMode;
+}
+
+// Three ways of putting the picture on screen. Some TV chips flicker with one and not another,
+// so the remote's left/right arrows switch between them while casting (the choice is remembered).
+function cycleMode(step) {
+  displayMode = ((displayMode - 1 + step + 3) % 3) + 1;
+  if (window.Cast && Cast.setDisplayMode) Cast.setDisplayMode(displayMode);
+  applyMode();
+  if (pc) showBadge('Display mode ' + displayMode + '/3: ' + MODES[displayMode] + '   (\u25c0 \u25b6 to change)', 4000);
+}
+
+function applyMode() {
+  var casting = !!pc && idle.style.display === 'none';
+  video.className = displayMode === 2 ? 'gpu' : displayMode === 3 ? 'hidden-source' : '';
+  video.style.display = casting && displayMode !== 3 ? 'block' : 'none';
+  canvas.style.display = casting && displayMode === 3 ? 'block' : 'none';
+  if (casting && displayMode === 3) startPainting(); else painting = false;
+}
+
+function startPainting() {
+  if (painting) return;
+  painting = true;
+  var useFrameCallback = typeof video.requestVideoFrameCallback === 'function';
+  function paint() {
+    if (!painting) return;
+    var vw = video.videoWidth, vh = video.videoHeight;
+    var cw = window.innerWidth, ch = window.innerHeight;
+    if (canvas.width !== cw || canvas.height !== ch) { canvas.width = cw; canvas.height = ch; }
+    if (vw && vh) {
+      var scale = Math.min(cw / vw, ch / vh), w = vw * scale, h = vh * scale;
+      ctx2d.drawImage(video, (cw - w) / 2, (ch - h) / 2, w, h);
+    }
+    if (useFrameCallback) video.requestVideoFrameCallback(paint); else requestAnimationFrame(paint);
+  }
+  if (useFrameCallback) video.requestVideoFrameCallback(paint); else requestAnimationFrame(paint);
 }
 
 function setStatus(t) { statusEl.textContent = t || ''; }
@@ -62,6 +111,7 @@ function showBadge(text, ms) {
 
 function closePc() {
   clearInterval(statsTimer);
+  painting = false;
   clearTimeout(dropTimer);
   if (pc) {
     pc.ontrack = pc.onaddstream = pc.oniceconnectionstatechange = null;
@@ -74,9 +124,10 @@ function stopCast(reason) {
   closePc();
   video.pause();
   video.srcObject = null;
-  video.style.display = 'none';
   idle.style.display = 'flex';
+  applyMode();
   badge.style.display = 'none';
+  statsEl.style.display = 'none';
   setStatus(reason || '');
 }
 
@@ -88,8 +139,8 @@ function attachStream(stream) {
     // Autoplay with sound refused: play muted rather than show nothing.
     video.muted = true; video.play();
   });
-  video.style.display = 'block';
   idle.style.display = 'none';
+  applyMode();
 }
 
 function waitForIce(conn, ms) {
@@ -176,6 +227,8 @@ function handleOffer(id, offerText, sender, senderIp) {
   try { offer = JSON.parse(offerText); } catch (e) { Cast.answer(id, '', 'bad offer'); return; }
   if (!offer || offer.type !== 'offer' || typeof offer.sdp !== 'string') { Cast.answer(id, '', 'bad offer'); return; }
 
+  // Receive buffer chosen on the PC: 0 = lowest delay, more = smoother on weak Wi-Fi.
+  var bufferMs = typeof offer.buffer === 'number' && offer.buffer >= 0 && offer.buffer <= 1000 ? offer.buffer : 150;
   offer = { type: 'offer', sdp: unhideAddresses(offer.sdp, senderIp) };
   closePc();
   prev = {}; lastSize = '';
@@ -188,7 +241,7 @@ function handleOffer(id, offerText, sender, senderIp) {
     // Small extra buffer: rides out Wi-Fi hiccups instead of cutting the sound or freezing.
     var r = ev.receiver;
     if (r) {
-      try { if ('jitterBufferTarget' in r) r.jitterBufferTarget = 150; else r.playoutDelayHint = 0.15; } catch (e) {}
+      try { if ('jitterBufferTarget' in r) r.jitterBufferTarget = bufferMs; else r.playoutDelayHint = bufferMs / 1000; } catch (e) {}
     }
     stream = (ev.streams && ev.streams[0]) || stream || new MediaStream();
     if (stream.getTracks().indexOf(ev.track) < 0) stream.addTrack(ev.track);
@@ -200,7 +253,7 @@ function handleOffer(id, offerText, sender, senderIp) {
     var st = conn.iceConnectionState;
     if (st === 'connected' || st === 'completed') {
       clearTimeout(dropTimer);
-      showBadge('Casting from ' + sender + '  ·  press OK for stats', 5000);
+      showBadge('Casting from ' + sender + '  \u00b7  OK: stats  \u00b7  \u25c0 \u25b6: display mode ' + displayMode, 6000);
       clearInterval(statsTimer);
       statsTimer = setInterval(function () { readStats(conn); }, 1000);
     } else if (st === 'disconnected') {

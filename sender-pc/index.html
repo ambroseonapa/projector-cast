@@ -29,13 +29,26 @@
     <label class="check"><input type="checkbox" id="audio" checked> Send PC sound to the projector</label>
     <p class="note" id="audioNote" hidden>Sound casting works on Windows only.</p>
 
-    <label>Screen</label>
-    <div id="screens" class="screens"></div>
+    <label>What to cast</label>
+    <p class="hint">Pick a <b>window</b> (for example the browser playing the match) to keep using the rest of your PC while it plays on the projector.</p>
+    <div id="screens"></div>
 
     <details>
       <summary>Advanced</summary>
       <label for="ip">Projector address (only if the code isn't found)</label>
       <input id="ip" placeholder="e.g. 192.168.1.25" autocomplete="off">
+      <label for="buffer">Delay</label>
+      <select id="buffer">
+        <option value="150">Smooth (recommended)</option>
+        <option value="0">Lowest delay (may stutter on weak Wi-Fi)</option>
+        <option value="400">Extra smooth (more delay)</option>
+      </select>
+      <label for="capture">Capture method</label>
+      <select id="capture">
+        <option value="auto">Automatic</option>
+        <option value="compat">Compatibility (try this if the picture flickers)</option>
+      </select>
+      <p class="hint">Changing the capture method restarts this app.</p>
       <label for="codec">Video codec</label>
       <select id="codec">
         <option value="h264">H.264 (best for projectors)</option>
@@ -46,10 +59,22 @@
     <button id="start" class="primary">Start casting</button>
   </section>
 
+  <section class="card" id="update" hidden>
+    <div id="updateText"></div>
+    <p class="hint">The projector will show an install screen. Select <b>Install</b> with the remote, then open Projector Cast again.
+      (The first time, Android may ask you to allow installing from Projector Cast. Allow it.)</p>
+    <button id="updateNow" class="primary">Update the projector app</button>
+    <button id="updateSkip" class="secondary">Cast without updating</button>
+  </section>
+
   <section class="card" id="live" hidden>
     <div class="dot" id="dot"></div>
     <div id="state">Connecting...</div>
     <div id="stats" class="stats"></div>
+    <video id="preview" muted autoplay playsinline></video>
+    <p class="hint">Preview of what is being sent. If this preview flickers too, the flicker starts on the PC:
+      stop, then set <b>Advanced → Capture method → Compatibility</b>. If only the projector flickers, press
+      <b>◀ ▶</b> on the projector remote to try its other display modes.</p>
     <p class="tip">You can minimise this window. Casting keeps running until you press Stop.</p>
     <button id="stop" class="danger">Stop casting</button>
   </section>

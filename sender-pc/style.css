@@ -38,3 +38,9 @@ button { width: 100%; margin-top: 18px; padding: 12px; border: 0; border-radius:
 .stats { color: var(--muted); margin-top: 6px; min-height: 2.8em; font-variant-numeric: tabular-nums; white-space: pre-line; }
 .error { color: #ff8a8d; min-height: 1.4em; margin-top: 12px; }
 .tip { color: var(--muted); font-size: 13px; margin: 14px 0 0; }
+.hint { color: var(--muted); font-size: 13px; margin: 2px 0 8px; }
+.group { margin: 10px 0 6px; color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .06em; }
+.secondary { background: transparent; border: 1px solid var(--line); color: var(--text); margin-top: 10px; }
+#preview { width: 100%; margin-top: 14px; border-radius: 8px; background: #000; aspect-ratio: 16 / 9; }
+#updateText { font-weight: 600; font-size: 16px; margin-bottom: 6px; }
+.error.note-ok { color: #8fe0ad; }

@@ -17,4 +17,7 @@ PASS=${KEYSTORE_PASS:-projectorcast}
   -alias cast -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Projector Cast" >/dev/null 2>&1
 mkdir -p ../dist
 apksigner sign --ks "$KS" --ks-pass pass:"$PASS" --out ../dist/ProjectorCast.apk build/aligned.apk
-apksigner verify ../dist/ProjectorCast.apk && echo "Built ../dist/ProjectorCast.apk"
+apksigner verify ../dist/ProjectorCast.apk
+# The PC app bundles the APK and uses this number to decide whether the projector needs updating.
+sed -n 's/.*android:versionCode="\([0-9]*\)".*/\1/p' AndroidManifest.xml > ../dist/ProjectorCast.version
+echo "Built ../dist/ProjectorCast.apk (version $(cat ../dist/ProjectorCast.version))"

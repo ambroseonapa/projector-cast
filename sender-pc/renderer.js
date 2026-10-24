@@ -14,7 +14,8 @@ function store(key, value) {
   return null;
 }
 
-function showError(text) { $('error').textContent = text || ''; }
+function showError(text) { $('error').className = 'error'; $('error').textContent = text || ''; }
+function showNote(text) { $('error').className = 'error note-ok'; $('error').textContent = text; }
 
 function setLive(on) {
   $('setup').hidden = on;
@@ -26,26 +27,54 @@ async function loadScreens() {
   const box = $('screens');
   box.textContent = '';
   if (!list.length) {
-    box.textContent = 'No screens found.';
+    box.textContent = 'Nothing to cast was found.';
     return;
   }
   if (!list.some((s) => s.id === selectedScreen)) selectedScreen = list[0].id;
-  list.forEach((s) => {
-    const b = document.createElement('button');
-    b.type = 'button';
-    b.className = 'screen' + (s.id === selectedScreen ? ' selected' : '');
-    const img = document.createElement('img');
-    img.src = s.thumb;
-    img.alt = '';
-    const label = document.createElement('span');
-    label.textContent = s.name;
-    b.append(img, label);
-    b.addEventListener('click', () => {
-      selectedScreen = s.id;
-      box.querySelectorAll('.screen').forEach((el) => el.classList.remove('selected'));
-      b.classList.add('selected');
+  for (const [kind, title] of [['screen', 'Whole screen'], ['window', 'One window']]) {
+    const items = list.filter((s) => s.kind === kind);
+    if (!items.length) continue;
+    const head = document.createElement('div');
+    head.className = 'group';
+    head.textContent = title;
+    const grid = document.createElement('div');
+    grid.className = 'screens';
+    items.forEach((s) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'screen' + (s.id === selectedScreen ? ' selected' : '');
+      b.title = s.name;
+      const img = document.createElement('img');
+      img.src = s.thumb;
+      img.alt = '';
+      const label = document.createElement('span');
+      label.textContent = s.name.length > 40 ? s.name.slice(0, 38) + '…' : s.name;
+      b.append(img, label);
+      b.addEventListener('click', () => {
+        selectedScreen = s.id;
+        box.querySelectorAll('.screen').forEach((el) => el.classList.remove('selected'));
+        b.classList.add('selected');
+      });
+      grid.append(b);
     });
-    box.append(b);
+    box.append(head, grid);
+  }
+}
+
+/** Resolves true to update the projector first, false to cast as is. */
+function askToUpdate(have, bundled) {
+  $('updateText').textContent = `The projector app is out of date (version ${have || 1} → ${bundled}).`;
+  $('setup').hidden = true;
+  $('update').hidden = false;
+  return new Promise((resolve) => {
+    const done = (v) => {
+      $('update').hidden = true;
+      $('setup').hidden = false;
+      $('updateNow').onclick = $('updateSkip').onclick = null;
+      resolve(v);
+    };
+    $('updateNow').onclick = () => done(true);
+    $('updateSkip').onclick = () => done(false);
   });
 }
 
@@ -61,6 +90,14 @@ async function init() {
   $('quality').value = (QUALITY[store('quality')] && store('quality')) || 'p720_30';
   $('content').value = store('content') || 'motion';
   $('codec').value = store('codec') || 'h264';
+  $('buffer').value = store('buffer') || '150';
+  const settings = await window.cast.getSettings();
+  $('capture').value = settings.captureMethod;
+  $('capture').addEventListener('change', () => {
+    if (session) return;
+    showError('Restarting with the new capture method...');
+    window.cast.setCaptureMethod($('capture').value);
+  });
   $('audio').checked = store('audio') !== '0';
 
   const platform = await window.cast.platform();
@@ -85,7 +122,7 @@ async function start() {
   const manualIp = $('ip').value.trim();
   if (manualIp && !/^\d{1,3}(\.\d{1,3}){3}$/.test(manualIp)) return showError('The projector address should look like 192.168.1.25');
 
-  ['code', 'ip', 'quality', 'content', 'codec'].forEach((k) => store(k, $(k).value.trim()));
+  ['code', 'ip', 'quality', 'content', 'codec', 'buffer'].forEach((k) => store(k, $(k).value.trim()));
   store('audio', $('audio').checked ? '1' : '0');
 
   $('start').disabled = true;
@@ -95,13 +132,32 @@ async function start() {
     if (manualIp) {
       const info = await window.cast.ping(manualIp).catch(() => null);
       if (!info) throw new Error(`No Projector Cast app answered at ${manualIp}. Is the app open on the projector?`);
-      target = { ip: manualIp, name: info.name };
+      target = { ip: manualIp, name: info.name, version: info.version };
     } else {
       target = await window.cast.findProjector(code);
       if (!target) {
         throw new Error('Projector not found. Check the code, make sure the app is open on the projector and '
           + 'both are on the same Wi-Fi. If it still fails, type the projector address under Advanced.');
       }
+      const info = await window.cast.ping(target.ip).catch(() => null);
+      target.version = info ? info.version : 0;
+    }
+
+    const bundled = await window.cast.bundledApkVersion();
+    if (bundled > (target.version || 1) && await askToUpdate(target.version, bundled)) {
+      $('start').textContent = 'Sending the update...';
+      try {
+        await window.cast.pushUpdate(target.ip, code);
+      } catch (e) {
+        // Projector apps before version 3 have no update receiver: they need one last manual install.
+        if (/not found/i.test(cleanError(e))) {
+          throw new Error('This projector app is too old to update itself. Install the new ProjectorCast.apk one last time '
+            + 'with a USB stick; after that, updates come from this PC app.');
+        }
+        throw e;
+      }
+      showNote('Update sent. On the projector, select Install, then open Projector Cast and press Start casting again.');
+      return;
     }
 
     await window.cast.prepareCapture({ screenId: selectedScreen, audio: $('audio').checked });
@@ -113,6 +169,7 @@ async function start() {
       content: $('content').value,
       codec: $('codec').value,
       audio: $('audio').checked,
+      buffer: parseInt($('buffer').value, 10),
     };
     setLive(true);
     $('state').textContent = 'Connecting...';
@@ -125,8 +182,10 @@ async function start() {
         $('dot').className = 'dot' + (kind === 'live' ? ' live' : '');
       },
       onStats: (text) => { $('stats').textContent = text; },
+      onStream: (stream) => { $('preview').srcObject = stream; },
       onEnded: (reason) => {
         session = null;
+        $('preview').srcObject = null;
         window.cast.keepAwake(false);
         setLive(false);
         if (reason && reason !== 'Stopped') showError(reason);
