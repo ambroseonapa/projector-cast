@@ -45,6 +45,8 @@ The PC app carries the latest projector app inside it. When you start casting to
 
 Switching between Native and the web modes reconnects automatically within a couple of seconds.
 
+In Native mode, **▲ ▼** choose how the picture is decoded: *hardware, direct* (default), *hardware, via memory* or *software*. Some TV chips' hardware decoders show one frame and then stall when drawing straight to the screen. The projector notices this (video keeps arriving but the picture doesn't change for 3 seconds), switches to the next way by itself, and remembers the one that works.
+
 **Settings while casting:** open **⚙ Settings while casting** in the PC app to change quality, content type or delay without stopping.
 
 **Delay** (Advanced): *Smooth* adds about 0.15 s of buffer to ride out Wi-Fi hiccups. *Lowest delay* removes it. Casting never uses the internet, so internet speed doesn't matter. What matters is the Wi-Fi link between the PC, the router and the projector.

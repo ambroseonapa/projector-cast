@@ -22,6 +22,8 @@ import org.webrtc.RtpReceiver;
 import org.webrtc.RtpTransceiver;
 import org.webrtc.SdpObserver;
 import org.webrtc.SessionDescription;
+import org.webrtc.SoftwareVideoDecoderFactory;
+import org.webrtc.VideoDecoderFactory;
 import org.webrtc.SurfaceViewRenderer;
 import org.webrtc.VideoFrame;
 import org.webrtc.VideoSink;
@@ -72,8 +74,17 @@ class NativePlayer {
     private final Handler ui = new Handler(Looper.getMainLooper());
     private final SurfaceViewRenderer view;
     private final Listener listener;
+    private final Context ctx;
     private final EglBase egl;
-    private final PeerConnectionFactory factory;
+    private PeerConnectionFactory factory;
+    private JavaAudioDeviceModule adm;
+    private int strategy;
+
+    /**
+     * Ways of decoding the picture. Some TV chips' hardware decoders show one frame and then stall
+     * when they draw straight to the screen; the app moves to the next way when that happens.
+     */
+    static final String[] STRATEGIES = {"hardware, direct", "hardware, via memory", "software"};
     private PeerConnection pc;
     private VideoTrack videoTrack;
     private FrameGate gate;
@@ -85,7 +96,8 @@ class NativePlayer {
     private int sizeChanges;
     private String lastSize = "";
 
-    NativePlayer(Context ctx, SurfaceViewRenderer view, Listener listener) {
+    NativePlayer(Context ctx, SurfaceViewRenderer view, Listener listener, int strategy) {
+        this.ctx = ctx;
         this.view = view;
         this.listener = listener;
         egl = EglBase.create();
@@ -93,8 +105,22 @@ class NativePlayer {
         view.setScalingType(RendererCommon.ScalingType.SCALE_ASPECT_FIT);
         view.setEnableHardwareScaler(false);
         view.setMirror(false);
+        buildFactory(strategy);
+    }
 
-        JavaAudioDeviceModule adm = JavaAudioDeviceModule.builder(ctx)
+    int strategy() { return strategy; }
+
+    /** UI thread. Ends any session and rebuilds the decoder setup; the PC reconnects by itself. */
+    void setStrategy(int s) {
+        closeSession();
+        if (s != strategy || factory == null) buildFactory(s);
+    }
+
+    private void buildFactory(int s) {
+        strategy = ((s % STRATEGIES.length) + STRATEGIES.length) % STRATEGIES.length;
+        if (factory != null) factory.dispose();
+        if (adm != null) adm.release();
+        adm = JavaAudioDeviceModule.builder(ctx)
                 .setUseStereoOutput(true)
                 .setUseHardwareAcousticEchoCanceler(false)
                 .setUseHardwareNoiseSuppressor(false)
@@ -103,9 +129,13 @@ class NativePlayer {
                         .setContentType(AudioAttributes.CONTENT_TYPE_MOVIE)
                         .build())
                 .createAudioDeviceModule();
+        VideoDecoderFactory decoders;
+        if (strategy == 0) decoders = new DefaultVideoDecoderFactory(egl.getEglBaseContext());
+        else if (strategy == 1) decoders = new DefaultVideoDecoderFactory(null); // hardware decoder, frames copied to memory
+        else decoders = new SoftwareVideoDecoderFactory(); // if it has no H.264, VP8 gets negotiated instead
         factory = PeerConnectionFactory.builder()
                 .setAudioDeviceModule(adm)
-                .setVideoDecoderFactory(new DefaultVideoDecoderFactory(egl.getEglBaseContext()))
+                .setVideoDecoderFactory(decoders)
                 .createPeerConnectionFactory();
     }
 
@@ -134,6 +164,9 @@ class NativePlayer {
         }
         connectionDrops = 0;
         sizeChanges = 0;
+        lastReceived = -1;
+        lastRendered = -1;
+        stuckSeconds = 0;
         lastSize = "";
         prev.clear();
 
@@ -176,8 +209,54 @@ class NativePlayer {
     void release() {
         closeSession();
         view.release();
-        factory.dispose();
+        if (factory != null) factory.dispose();
+        if (adm != null) adm.release();
         egl.release();
+    }
+
+    // ---- Freeze detection ----
+
+    interface Health {
+        void result(boolean frozen, boolean neverShown);
+    }
+
+    private long lastReceived = -1;
+    private long lastRendered = -1;
+    private int stuckSeconds;
+
+    /**
+     * Call about once a second. Frozen = video keeps arriving for 3 s but no new picture reaches the
+     * screen (a still PC screen sends almost nothing, so it does not count as frozen).
+     */
+    void checkHealth(final Health out) {
+        final PeerConnection conn;
+        synchronized (this) {
+            conn = pc;
+        }
+        final FrameGate g = gate;
+        if (conn == null) return;
+        conn.getStats(new RTCStatsCollectorCallback() {
+            public void onStatsDelivered(RTCStatsReport report) {
+                long received = -1;
+                for (RTCStats st : report.getStatsMap().values()) {
+                    Map<String, Object> m = st.getMembers();
+                    if (!"inbound-rtp".equals(st.getType()) || !"video".equals(m.get("kind"))) continue;
+                    Object fr = m.get("framesReceived");
+                    if (!(fr instanceof Number)) fr = m.get("packetsReceived");
+                    if (fr instanceof Number) received = ((Number) fr).longValue();
+                }
+                long rendered = g != null ? g.count : 0;
+                boolean stuckNow = lastReceived >= 0 && received - lastReceived >= 3 && rendered == lastRendered;
+                stuckSeconds = stuckNow ? stuckSeconds + 1 : 0;
+                lastReceived = received;
+                lastRendered = rendered;
+                final boolean frozen = stuckSeconds >= 3;
+                final boolean never = frozen && rendered == 0;
+                ui.post(new Runnable() {
+                    public void run() { out.result(frozen, never); }
+                });
+            }
+        });
     }
 
     /** True once this session's first video frame reached the screen. */
@@ -193,9 +272,11 @@ class NativePlayer {
      */
     private class FrameGate implements VideoSink {
         volatile boolean seen;
+        volatile long count;
 
         public void onFrame(VideoFrame frame) {
             view.onFrame(frame);
+            count++;
             if (!seen) {
                 seen = true;
                 ui.post(new Runnable() {
@@ -267,7 +348,7 @@ class NativePlayer {
                 double fps = perSec("vframes", m.get("framesDecoded"), ts);
                 Object bytes = m.get("bytesReceived");
                 double mbps = perSec("vbytes", bytes instanceof Number ? ((Number) bytes).doubleValue() * 8 / 1e6 : null, ts);
-                b.append("Player    NATIVE (hardware path)\n");
+                b.append("Player    NATIVE  \u00b7  decoding: ").append(STRATEGIES[strategy]).append("  (\u25b2\u25bc to change)\n");
                 b.append("Picture   ").append(size).append("  ").append(fmt(fps, 0)).append(" fps  ").append(fmt(mbps, 1)).append(" Mbps\n");
                 Object impl = m.get("decoderImplementation");
                 b.append("Decoder   ").append(codecName.replace("video/", "")).append(impl != null ? "  " + impl : "").append('\n');

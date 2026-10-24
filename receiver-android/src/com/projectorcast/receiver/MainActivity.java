@@ -93,7 +93,7 @@ public class MainActivity extends Activity implements CastServer.Handler {
             try {
                 surface = new SurfaceViewRenderer(this);
                 root.addView(surface, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-                player = new NativePlayer(this, surface, nativeEvents);
+                player = new NativePlayer(this, surface, nativeEvents, prefs().getInt("decoder", 0));
                 surface.setVisibility(View.GONE);
             } catch (Throwable t) {
                 if (surface != null) root.removeView(surface);
@@ -262,6 +262,38 @@ public class MainActivity extends Activity implements CastServer.Handler {
         js("stopCast(" + CastServer.quote(reason) + ")");
     }
 
+    private int autoSwitches;
+
+    /** Every second while casting natively: if the picture froze, move to the next way of decoding. */
+    private final Runnable healthTick = new Runnable() {
+        public void run() {
+            if (!nativeCasting()) return;
+            player.checkHealth(new NativePlayer.Health() {
+                public void result(boolean frozen, boolean neverShown) {
+                    if (!frozen || !nativeCasting()) return;
+                    if (autoSwitches >= NativePlayer.STRATEGIES.length - 1) {
+                        showBadge("The picture keeps freezing in native mode. Press \u25c0 \u25b6 for display mode 4/4 (Web canvas).", 0);
+                        ui.removeCallbacks(healthTick);
+                        return;
+                    }
+                    autoSwitches++;
+                    switchDecoder(player.strategy() + 1, (neverShown ? "No picture" : "Picture froze")
+                            + " \u2014 trying decoding: ");
+                }
+            });
+            ui.postDelayed(this, 1000);
+        }
+    };
+
+    private void switchDecoder(int next, String why) {
+        ui.removeCallbacks(healthTick);
+        player.setStrategy(next);
+        prefs().edit().putInt("decoder", player.strategy()).apply();
+        String text = why + NativePlayer.STRATEGIES[player.strategy()] + ". Reconnecting...";
+        showIdle(text);
+        showBadge(text, 6000);
+    }
+
     private final NativePlayer.Listener nativeEvents = new NativePlayer.Listener() {
         public void onFirstFrame() {
             web.setVisibility(View.GONE);
@@ -274,8 +306,11 @@ public class MainActivity extends Activity implements CastServer.Handler {
         public void onConnected() {
             // Sound but no picture after a few seconds: say so instead of leaving the code screen up silently.
             ui.removeCallbacks(noPictureCheck);
-            ui.postDelayed(noPictureCheck, 6000);
-            showBadge("Casting from " + sender + "  \u00b7  OK: stats  \u00b7  \u25c0 \u25b6: display mode " + mode + "/4", 6000);
+            ui.postDelayed(noPictureCheck, 8000);
+            ui.removeCallbacks(healthTick);
+            ui.postDelayed(healthTick, 2000);
+            showBadge("Casting from " + sender + "  \u00b7  OK: stats  \u00b7  \u25c0 \u25b6: display mode " + mode + "/4"
+                    + "  \u00b7  \u25b2\u25bc: decoding (" + NativePlayer.STRATEGIES[player.strategy()] + ")", 6000);
         }
 
         public void onEnded(String reason) {
@@ -556,6 +591,14 @@ public class MainActivity extends Activity implements CastServer.Handler {
                 } else {
                     js("toggleStats()");
                 }
+            }
+            return true;
+        }
+        if ((code == KeyEvent.KEYCODE_DPAD_UP || code == KeyEvent.KEYCODE_DPAD_DOWN) && mode == 1 && player != null) {
+            // Up/down: choose how the native player decodes (also changes by itself if the picture freezes).
+            if (event.getAction() == KeyEvent.ACTION_UP) {
+                autoSwitches = 0;
+                switchDecoder(player.strategy() + (code == KeyEvent.KEYCODE_DPAD_DOWN ? 1 : -1), "Decoding: ");
             }
             return true;
         }
