@@ -53,8 +53,9 @@ async function receiverStats(receiver) {
   });
 }
 
-async function run(browser, opts, label) {
+async function run(browser, opts, label, gpu) {
   const { ctx, receiver, sender, errors } = await setup(browser);
+  if (gpu) await sender.evaluate((always) => simulateWindowsGpu(always), gpu === 'always-throw');
   const t0 = Date.now();
   await sender.evaluate((o) => runCast(o), opts);
   await sender.waitForFunction(() => window.log.some((l) => l.startsWith('live:')), null, { timeout: 15000 });
@@ -141,6 +142,11 @@ async function run(browser, opts, label) {
   console.log('PASS 1080p30 / VP8 / sound');
   await run(browser, { quality: 'p720_60', content: 'motion', codec: 'h264', audio: true }, '720p60');
   console.log('PASS 720p60');
+  const g1 = await run(browser, { quality: 'p1080_30', content: 'motion', codec: 'h264', audio: true }, 'Windows GPU codec list', 'extra-h264');
+  assert(g1.codecs.some((c) => /video\/H264/.test(c)), 'still uses H.264 on such a PC: ' + g1.codecs);
+  console.log('PASS PC whose GPU lists an unusable H.264 format still casts in H.264');
+  await run(browser, { quality: 'p1080_30', content: 'motion', codec: 'h264', audio: true }, 'codec prefs always rejected', 'always-throw');
+  console.log('PASS casting still works if the codec preference is refused outright');
   await browser.close();
   console.log('ALL WEBRTC END-TO-END TESTS PASSED');
 })().catch((e) => { console.error('FAIL', e); process.exit(1); });

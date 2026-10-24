@@ -22,6 +22,23 @@ window.makeStream = function () {
   l.start(); r.start();
   return new MediaStream([...v.getVideoTracks(), ...dest.stream.getAudioTracks()]);
 };
+// Mimics a Windows PC whose GPU H.264 encoder lists a format Chrome cannot receive, where
+// setCodecPreferences throws "invalid codec with name H264" if that format is passed in.
+window.simulateWindowsGpu = function (alwaysThrow) {
+  const realSend = RTCRtpSender.getCapabilities.bind(RTCRtpSender);
+  RTCRtpSender.getCapabilities = (kind) => {
+    const caps = realSend(kind);
+    if (kind === 'video') caps.codecs.unshift({ mimeType: 'video/H264', clockRate: 90000, sdpFmtpLine: 'level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=640c34' });
+    return caps;
+  };
+  const realSet = RTCRtpTransceiver.prototype.setCodecPreferences;
+  RTCRtpTransceiver.prototype.setCodecPreferences = function (codecs) {
+    if (alwaysThrow || codecs.some((c) => /640c34/.test(c.sdpFmtpLine || ''))) {
+      throw new DOMException("Failed to execute 'setCodecPreferences' on 'RTCRtpTransceiver': Invalid codec preferences: invalid codec with name \"H264\".", 'InvalidModificationError');
+    }
+    return realSet.call(this, codecs);
+  };
+};
 window.runCast = async function (opts) {
   window.log = [];
   window.ended = null;

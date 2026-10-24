@@ -104,16 +104,36 @@
     });
   }
 
-  function preferCodec(transceiver, codec) {
-    if (!transceiver.setCodecPreferences || !global.RTCRtpSender || !RTCRtpSender.getCapabilities) return;
-    const caps = RTCRtpSender.getCapabilities('video');
-    if (!caps) return;
+  const codecKey = (c) => `${c.mimeType.toLowerCase()}|${c.clockRate}|${c.sdpFmtpLine || ''}`;
+
+  /** Orders `codecs` so the wanted codec comes first (baseline H.264 first of all: what TV chips decode in hardware). */
+  function orderCodecs(codecs, codec) {
     const want = codec === 'vp8' ? /vp8/i : /h264/i;
-    const first = caps.codecs.filter((c) => want.test(c.mimeType));
-    // Prefer constrained-baseline / baseline H.264: what TV chips decode in hardware.
-    first.sort((a, b) => (/42e01f|42001f/.test(b.sdpFmtpLine || '') ? 1 : 0) - (/42e01f|42001f/.test(a.sdpFmtpLine || '') ? 1 : 0));
-    const rest = caps.codecs.filter((c) => !want.test(c.mimeType));
-    if (first.length) transceiver.setCodecPreferences(first.concat(rest));
+    const baseline = (c) => (/42e01f|42001f/.test(c.sdpFmtpLine || '') ? 1 : 0);
+    const first = codecs.filter((c) => want.test(c.mimeType)).sort((a, b) => baseline(b) - baseline(a));
+    return first.length ? first.concat(codecs.filter((c) => !want.test(c.mimeType))) : null;
+  }
+
+  /**
+   * Best effort: a codec preference is never worth failing the cast over. Chrome only accepts codecs it
+   * can also receive, and on many Windows PCs the GPU's H.264 encoder lists formats that aren't in that
+   * set (setCodecPreferences then throws "invalid codec with name H264"), so offer the shared ones only.
+   */
+  function preferCodec(transceiver, codec) {
+    if (!transceiver.setCodecPreferences || !global.RTCRtpReceiver || !RTCRtpReceiver.getCapabilities) return 'default';
+    const recv = (RTCRtpReceiver.getCapabilities('video') || {}).codecs || [];
+    const send = (global.RTCRtpSender && RTCRtpSender.getCapabilities && (RTCRtpSender.getCapabilities('video') || {}).codecs) || recv;
+    const sendKeys = new Set(send.map(codecKey));
+    const shared = recv.filter((c) => sendKeys.has(codecKey(c)));
+    for (const list of [shared, recv]) {
+      const ordered = orderCodecs(list, codec);
+      if (!ordered) continue;
+      try {
+        transceiver.setCodecPreferences(ordered);
+        return ordered[0].mimeType;
+      } catch (_) { /* try the next list */ }
+    }
+    return 'default';
   }
 
   /**
