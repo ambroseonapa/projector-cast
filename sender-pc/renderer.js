@@ -281,6 +281,40 @@ function installUpdate() {
   window.cast.installUpdate();
 }
 
+// ---- Second screen (Windows virtual display) ----
+
+async function refreshVdd() {
+  const st = await window.cast.vddStatus().catch(() => ({ supported: false }));
+  $('vdd').hidden = !st.supported;
+  if (!st.supported) return;
+  $('vddStatus').textContent = !st.installed
+    ? 'Adds a virtual monitor that extends the desktop to the projector. Requires administrator rights.'
+    : st.on ? 'Virtual monitor is on. Select it under Source.' : 'Virtual monitor is off.';
+  $('vddInstall').hidden = st.installed;
+  $('vddOn').hidden = !st.installed || st.on;
+  $('vddOff').hidden = !st.installed || !st.on;
+  $('vddSettings').hidden = !st.installed || !st.on;
+}
+
+async function vddAction(button, work, busyText) {
+  const label = button.textContent;
+  button.disabled = true;
+  button.textContent = busyText;
+  showError('');
+  try {
+    const r = await work();
+    if (r && r.manual) showNote('Download the installer from the page that opened.');
+    else if (r && r.ok === false) showError('Installation did not complete.');
+  } catch (e) {
+    showError('The change was cancelled or not permitted.');
+  } finally {
+    button.disabled = false;
+    button.textContent = label;
+    await refreshVdd();
+    await loadScreens();
+  }
+}
+
 // ---- Casting ----
 
 async function init() {
@@ -320,6 +354,11 @@ async function init() {
   $('copyLast').addEventListener('click', copyReport);
   $('pcUpdateNow').addEventListener('click', installUpdate);
   $('pcDownload').addEventListener('click', () => window.cast.openReleases());
+  $('vddInstall').addEventListener('click', () => vddAction($('vddInstall'), () => window.cast.vddInstall(), 'Installing…'));
+  $('vddOn').addEventListener('click', () => vddAction($('vddOn'), () => window.cast.vddSet(true), 'Turning on…'));
+  $('vddOff').addEventListener('click', () => vddAction($('vddOff'), () => window.cast.vddSet(false), 'Turning off…'));
+  $('vddSettings').addEventListener('click', () => window.cast.openDisplaySettings());
+  refreshVdd();
   window.cast.onUpdateStatus(onUpdateStatus);
 
   $('code').addEventListener('input', () => { $('code').value = $('code').value.replace(/\D/g, '').slice(0, 6); });

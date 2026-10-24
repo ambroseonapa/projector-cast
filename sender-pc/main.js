@@ -1,6 +1,7 @@
 'use strict';
 
-const { app, BrowserWindow, ipcMain, desktopCapturer, session, powerSaveBlocker, shell, clipboard } = require('electron');
+const { app, BrowserWindow, ipcMain, desktopCapturer, session, powerSaveBlocker, shell, clipboard, screen } = require('electron');
+const { execFile } = require('child_process');
 const dgram = require('dgram');
 const http = require('http');
 const fs = require('fs');
@@ -147,12 +148,13 @@ ipcMain.handle('list-screens', async () => {
   });
   const ownTitle = win ? win.getTitle() : 'Projector Cast';
   const screens = sources.filter((s) => s.id.startsWith('screen:'));
+  const labels = new Map(screen.getAllDisplays().map((d) => [String(d.id), d.label]));
   return sources
     .filter((s) => !(s.id.startsWith('window:') && (s.name === ownTitle || !s.name)))
     .map((s) => {
       const isScreen = s.id.startsWith('screen:');
       const info = isScreen
-        ? { app: '', title: screens.length > 1 ? `Screen ${screens.indexOf(s) + 1}` : 'Entire screen', detail: '' }
+        ? { app: '', title: screenTitle(s, screens, labels), detail: '' }
         : describeWindow(s.name);
       return {
         id: s.id,
@@ -164,6 +166,65 @@ ipcMain.handle('list-screens', async () => {
       };
     });
 });
+
+function screenTitle(s, screens, labels) {
+  if (screens.length === 1) return 'Entire screen';
+  const label = labels.get(String(s.display_id)) || '';
+  const n = `Screen ${screens.indexOf(s) + 1}`;
+  if (VDD_NAMES.some((v) => label.includes(v)) || /virtual/i.test(label)) return `${n} (virtual)`;
+  return label ? `${n} (${label})` : n;
+}
+
+// ---- Second screen: Virtual Display Driver (github.com/VirtualDrivers/Virtual-Display-Driver, MIT) ----
+
+const VDD_PACKAGE = 'VirtualDrivers.Virtual-Display-Driver';
+const VDD_NAMES = ['Virtual Display Driver', 'IddSampleDriver Device HDR', 'VDD by MTT'];
+const VDD_RELEASES = 'https://github.com/VirtualDrivers/Virtual-Display-Driver/releases/latest';
+
+function powershell(script, timeout = 30000) {
+  return new Promise((resolve, reject) => {
+    execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script],
+      { windowsHide: true, timeout }, (err, stdout) => (err ? reject(err) : resolve(String(stdout).trim())));
+  });
+}
+
+/** Runs a PowerShell script elevated (UAC prompt) and waits for it. */
+function powershellElevated(script) {
+  const encoded = Buffer.from(script, 'utf16le').toString('base64');
+  return powershell(`$p = Start-Process powershell.exe -Verb RunAs -WindowStyle Hidden -Wait -PassThru `
+    + `-ArgumentList '-NoProfile','-EncodedCommand','${encoded}'; exit $p.ExitCode`, 120000);
+}
+
+const vddFilter = `Get-PnpDevice -Class Display -ErrorAction SilentlyContinue | Where-Object { @(${VDD_NAMES.map((n) => `'${n}'`).join(',')}) -contains $_.FriendlyName }`;
+
+ipcMain.handle('vdd-status', async () => {
+  if (process.platform !== 'win32') return { supported: false };
+  try {
+    const out = await powershell(`${vddFilter} | Select-Object -First 1 -ExpandProperty Status`);
+    if (!out) return { supported: true, installed: false };
+    return { supported: true, installed: true, on: /^OK$/i.test(out) };
+  } catch (_) {
+    return { supported: true, installed: false };
+  }
+});
+
+ipcMain.handle('vdd-install', () => new Promise((resolve) => {
+  execFile('winget', ['install', '--id', VDD_PACKAGE, '-e', '--accept-package-agreements', '--accept-source-agreements'],
+    { windowsHide: true, timeout: 15 * 60 * 1000 }, (err) => {
+      if (err && err.code === 'ENOENT') {
+        shell.openExternal(VDD_RELEASES); // no winget: use the project's installer
+        return resolve({ ok: false, manual: true });
+      }
+      resolve({ ok: !err });
+    });
+}));
+
+ipcMain.handle('vdd-set', async (_e, on) => {
+  await powershellElevated(`${vddFilter} | ${on ? 'Enable' : 'Disable'}-PnpDevice -Confirm:$false`);
+  return true;
+});
+
+ipcMain.handle('open-display-settings', () => shell.openExternal('ms-settings:display'));
 
 ipcMain.handle('get-settings', () => ({ captureMethod: settings.captureMethod || 'auto' }));
 

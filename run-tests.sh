@@ -11,6 +11,7 @@ echo "== Projector server ==";  java -cp jvm/out ServerTest
 echo "== Native player SDP rules ==";  node node/sdp-parity.test.js
 java -cp jvm/out RunServer >/dev/null & S1=$!; sleep 1
 echo "== PC network code =="; node node/main-network.test.js || { kill $S1; exit 1; }
+node node/vdd.test.js
 kill $S1
 echo "== WebRTC streaming =="; node webrtc/e2e.test.js | grep -v "sender over\|sender codecs"
 java -Dversion=2 -cp jvm/out RelayServer >/dev/null & S2=$!; sleep 1

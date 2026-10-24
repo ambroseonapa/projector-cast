@@ -21,4 +21,8 @@ contextBridge.exposeInMainWorld('cast', {
   onUpdateStatus: (cb) => ipcRenderer.on('update-status', (_e, status) => cb(status)),
   installUpdate: () => ipcRenderer.invoke('install-update'),
   openReleases: () => ipcRenderer.invoke('open-releases'),
+  vddStatus: () => ipcRenderer.invoke('vdd-status'),
+  vddInstall: () => ipcRenderer.invoke('vdd-install'),
+  vddSet: (on) => ipcRenderer.invoke('vdd-set', on),
+  openDisplaySettings: () => ipcRenderer.invoke('open-display-settings'),
 });
