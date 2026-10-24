@@ -6,6 +6,7 @@
  */
 (function (global) {
   const QUALITY = {
+    p540_30: { label: 'Projector-friendly 540p · 30 fps (smoothest on slow projectors)', width: 960, height: 540, fps: 30, kbps: 3500 },
     p720_60: { label: 'HD 720p · 60 fps (smoothest, recommended)', width: 1280, height: 720, fps: 60, kbps: 6000 },
     p720_30: { label: 'HD 720p · 30 fps (weak Wi-Fi)', width: 1280, height: 720, fps: 30, kbps: 5000 },
     p1080_60: { label: 'Full HD 1080p · 60 fps (strong PC and projector)', width: 1920, height: 1080, fps: 60, kbps: 12000 },
@@ -262,7 +263,7 @@
       const p = sender.getParameters();
       if (!p.encodings || !p.encodings.length) p.encodings = [{}];
       p.encodings[0].maxBitrate = this.q.kbps * 1000;
-      p.encodings[0].maxFramerate = this.q.fps;
+      p.encodings[0].maxFramerate = Math.min(this.q.fps, this.fpsCap || this.q.fps);
       // Screen capture ignores size limits on some PCs; scale down here so the chosen quality is what's sent.
       const s = sender.track && sender.track.getSettings ? sender.track.getSettings() : {};
       const scale = s.width && s.height ? Math.max(1, s.width / this.q.width, s.height / this.q.height) : 1;
@@ -312,11 +313,44 @@
       }, 1500);
     }
 
+    /**
+     * Called with the projector's decoded frames per second (from its stats, every 2 s). Sending more
+     * frames than it can decode makes them queue up: the picture falls behind the sound (slow motion)
+     * until the projector throws the queue away. So cap the frame rate at what it really manages,
+     * and try a little higher again after a while.
+     */
+    async adaptToProjector(decodedFps) {
+      if (this.stopped || !this.pc || !(decodedFps >= 0)) return;
+      const sent = this.lastSentFps || this.q.fps;
+      this.decodedSamples = (this.decodedSamples || []).concat(decodedFps).slice(-3);
+      if (this.decodedSamples.length < 3) return;
+      const avg = this.decodedSamples.reduce((a, b) => a + b, 0) / 3;
+      const cap = this.fpsCap || this.q.fps;
+      let next = cap;
+      if (avg >= 5 && avg < sent * 0.88) {
+        next = Math.max(10, Math.floor(avg * 0.9));
+        this.keptUpSince = 0;
+      } else if (this.fpsCap && avg >= Math.min(sent, cap) * 0.95) {
+        this.keptUpSince = this.keptUpSince || Date.now();
+        if (Date.now() - this.keptUpSince > 30000) {
+          next = Math.min(this.q.fps, cap + 5);
+          this.keptUpSince = 0;
+        }
+      }
+      if (next === cap) return;
+      this.fpsCap = next >= this.q.fps ? 0 : next;
+      this.decodedSamples = [];
+      const sender = this.pc.getSenders().find((x) => x.track && x.track.kind === 'video');
+      if (sender) await this.tuneSender(sender);
+    }
+
     /** Change quality / content / delay while casting: re-tunes the capture and reconnects (about a second). */
     async update(changes) {
       if (this.stopped) return;
       Object.assign(this.opts, changes);
       this.q = QUALITY[this.opts.quality] || this.q;
+      this.fpsCap = 0;
+      this.decodedSamples = [];
       const v = this.stream.getVideoTracks()[0];
       if ('contentHint' in v) v.contentHint = this.opts.content === 'detail' ? 'detail' : 'motion';
       try {
@@ -348,13 +382,15 @@
           if (r.type !== 'outbound-rtp') return;
           const kbps = rate(r.kind, r.bytesSent, r.timestamp);
           if (r.kind === 'video') {
+            if (r.framesPerSecond != null) this.lastSentFps = r.framesPerSecond;
             const size = r.frameWidth ? `${r.frameWidth}×${r.frameHeight}` : '';
             const fps = r.framesPerSecond != null ? `${Math.round(r.framesPerSecond)} fps` : '';
             const mbps = kbps != null ? (kbps / 1000).toFixed(1) + ' Mbps' : '';
             let limit = '';
             if (r.qualityLimitationReason === 'bandwidth') limit = ' · Wi-Fi is limiting quality';
             else if (r.qualityLimitationReason === 'cpu') limit = ' · PC is busy, lowering quality';
-            video = [size, fps, mbps].filter(Boolean).join(' · ') + limit;
+            video = [size, fps, mbps].filter(Boolean).join(' · ') + limit
+              + (this.fpsCap ? ` · matched to projector (${this.fpsCap} fps)` : '');
           } else if (r.kind === 'audio' && kbps != null) {
             const t = this.stream && this.stream.getAudioTracks()[0];
             const ch = t && t.getSettings ? t.getSettings().channelCount : null;

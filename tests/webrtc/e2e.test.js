@@ -182,6 +182,27 @@ async function run(browser, opts, label, gpu) {
   await run(browser, { quality: 'p720_30', content: 'motion', codec: 'h264', audio: true, checkModes: true }, '720p30 default');
   await run(browser, { quality: 'p720_30', content: 'motion', codec: 'h264', audio: true, buffer: 0 }, '720p30 lowest delay');
   console.log('PASS lowest-delay setting reaches the projector');
+  {
+    // A projector that only decodes ~15 fps: the PC must slow down to match instead of queueing frames.
+    const { ctx, receiver, sender } = await setup(browser);
+    await sender.evaluate((o) => runCast(o), { quality: 'p720_60', content: 'motion', codec: 'h264', audio: true });
+    await sender.waitForFunction(() => window.log.some((l) => l.startsWith('live:')), null, { timeout: 15000 });
+    await receiver.waitForTimeout(3000);
+    for (let i = 0; i < 3; i++) await sender.evaluate(() => window.session.adaptToProjector(15));
+    const cap = await sender.evaluate(() => window.session.pc.getSenders().find((x) => x.track.kind === 'video').getParameters().encodings[0].maxFramerate);
+    assert.strictEqual(cap, 13, 'frame rate capped to what the projector decodes: ' + cap);
+    await receiver.waitForTimeout(4000);
+    const sent = await sender.evaluate(() => window.session.lastSentFps);
+    const line = await sender.evaluate(() => window.lastStats);
+    assert(sent <= 15 && /matched to projector \(13 fps\)/.test(line), 'sending ' + sent + ' fps: ' + line);
+    console.log(`PASS PC slows to the projector's pace: capped at ${cap} fps, now sending ${Math.round(sent)} fps`);
+    await sender.evaluate(() => window.session.update({ quality: 'p540_30' }));
+    await receiver.waitForTimeout(3000);
+    const r = await receiver.evaluate(() => [document.getElementById('video').videoWidth, document.getElementById('video').videoHeight]);
+    assert(r[0] === 960 && r[1] === 540, '540p preset: ' + r);
+    console.log('PASS projector-friendly 540p preset sends 960x540');
+    await ctx.close();
+  }
   console.log('PASS 720p30 (new default)');
   await run(browser, { quality: 'p1080_60', content: 'motion', codec: 'h264', audio: true }, '1080p60 H264 motion');
   console.log('PASS 1080p60 / H.264 / sound');

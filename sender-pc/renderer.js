@@ -24,6 +24,9 @@ function startReport(target) {
     if (!session || !reportTarget) return;
     const p = await window.cast.projectorStats(reportTarget.ip, reportTarget.code).catch((e) => ({ error: cleanError(e) }));
     lastProjector = p;
+    // Native player reports "decoded N"; the web player only "Picture WxH  N fps".
+    const decoded = /decoded (\d+)/.exec(p.stats || '') || /Picture\s+\S+\s+(\d+) fps/.exec(p.stats || '');
+    if (decoded && session) session.adaptToProjector(parseInt(decoded[1], 10)).catch(() => {});
     const projText = p.error ? 'no answer: ' + p.error : (p.stats || '(no stats yet)');
     $('projStats').textContent = p.error ? projText
       : `${p.mode || ''}  ·  decoding: ${p.decoding || '?'}\n${projText}`;
