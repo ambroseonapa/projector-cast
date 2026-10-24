@@ -49,3 +49,22 @@ button { width: 100%; margin-top: 18px; padding: 12px; border: 0; border-radius:
 .icon { width: 44px; margin: 0; padding: 0; background: #0e1824; border: 1px solid var(--line); font-size: 20px; }
 #sourceThumb { display: block; width: 100%; max-height: 200px; object-fit: contain; margin-top: 8px; border-radius: 8px; background: #000; }
 #liveSettings { text-align: left; }
+.picker { border: 1px solid var(--line); border-radius: 10px; background: #0e1824; }
+.picker > details { margin: 0; }
+.picker summary { list-style: none; display: flex; align-items: center; gap: 10px; padding: 8px; color: var(--text); }
+.picker summary::-webkit-details-marker { display: none; }
+.picker summary img { width: 96px; height: 54px; object-fit: cover; border-radius: 6px; background: #000; flex: none; }
+.picker summary .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.picker summary .kind { display: block; color: var(--muted); font-size: 12px; font-weight: 400; }
+.picker summary .chev { color: var(--muted); font-size: 13px; flex: none; }
+.picker details[open] summary .chev { transform: rotate(180deg); }
+.picker .body { padding: 0 8px 8px; max-height: 340px; overflow-y: auto; }
+.picker .bar { display: flex; justify-content: space-between; align-items: center; }
+.picker .bar .group { margin: 8px 0 6px; }
+.picker .bar button { width: auto; margin: 0; padding: 4px 10px; font-size: 13px; background: transparent; border: 1px solid var(--line); color: var(--text); }
+.pick-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); gap: 6px; }
+.pick-card { margin: 0; padding: 3px; border: 2px solid var(--line); border-radius: 8px; background: #0b1520; color: var(--text);
+  font-size: 12px; font-weight: 400; text-align: center; }
+.pick-card img { display: block; width: 100%; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 4px; background: #000; }
+.pick-card span { display: block; margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pick-card.selected { border-color: var(--accent); }

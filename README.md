@@ -26,7 +26,7 @@ New releases are built by GitHub itself (`.github/workflows/release.yml`) whenev
 
 ### Updating
 
-The PC app carries the latest projector app inside it. When you start casting to an older projector app, the PC app offers **Update the projector app**. The projector then shows Android's install screen: select **Install** with the remote and open Projector Cast again. The first time, Android may ask you to allow installs from Projector Cast. Projector apps older than version 1.2 can't receive updates this way, so install 1.2 by USB once.
+The PC app carries the latest projector app inside it. When you start casting to an older projector app, the PC app offers **Update the projector app**. The projector then shows Android's install screen: select **Install** with the remote and open Projector Cast again. The first time, Android may ask you to allow installs from Projector Cast. Projector apps older than version 1.4 can't always install updates this way (some projectors have no app that opens APK files), so install 1.4 by USB once. From 1.4 on, updates go through Android's own installer.
 
 ## Use
 
@@ -36,7 +36,7 @@ The PC app carries the latest projector app inside it. When you start casting to
 
 **What are you showing?** Choose *Videos, sport, games* for smooth motion. Choose *Documents, slides* to keep small text sharp.
 
-**What to cast:** pick *Whole screen*, or a window under *One window* in the drop-down (press ↻ to refresh the list). A window keeps casting even while other windows cover it, so you can keep working. Don't minimise it. If the picked window has closed, the app refuses to start instead of showing your whole screen. PC sound is always the whole PC's sound. With *Play sound only on the projector* ticked, the PC's own speakers are muted while casting.
+**What to cast:** click the *What to cast* panel to unfold it, then click a card under *Whole screen* or *One window* (↻ Refresh updates the list). The panel folds itself again and shows your pick. While casting, the same panel under **⚙ Settings while casting** switches what is cast straight away, without reconnecting. A window keeps casting even while other windows cover it, so you can keep working. Don't minimise it. If the picked window has closed, the app refuses to start instead of showing your whole screen. PC sound is always the whole PC's sound. With *Play sound only on the projector* ticked, the PC's own speakers are muted while casting.
 
 **Projector remote while casting:** **OK** shows or hides the stats panel. **◀ ▶** switch display modes, and the projector remembers your choice:
 

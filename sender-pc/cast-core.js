@@ -174,9 +174,43 @@
       if (!v) throw new Error('No screen was captured');
       if (this.events.onStream) this.events.onStream(this.stream);
       if ('contentHint' in v) v.contentHint = this.opts.content === 'detail' ? 'detail' : 'motion';
-      v.addEventListener('ended', () => this.stop('Screen sharing was stopped'));
+      this.watchEnd(v);
       for (const a of this.stream.getAudioTracks()) if ('contentHint' in a) a.contentHint = 'music';
       await this.connect();
+    }
+
+    watchEnd(track) {
+      track.addEventListener('ended', () => {
+        // Only the track being cast right now ends the session (not one replaced by switchSource).
+        if (this.stream && this.stream.getVideoTracks()[0] === track) this.stop('Screen sharing was stopped');
+      });
+    }
+
+    /** Cast a different screen/window without reconnecting: the picture changes, the sound carries on. */
+    async switchSource() {
+      if (this.stopped) return;
+      const fresh = await navigator.mediaDevices.getDisplayMedia({
+        video: {
+          width: { ideal: this.q.width, max: this.q.width },
+          height: { ideal: this.q.height, max: this.q.height },
+          frameRate: { ideal: this.q.fps, max: this.q.fps },
+        },
+        audio: false,
+      });
+      const nv = fresh.getVideoTracks()[0];
+      if (!nv) throw new Error('Nothing was captured');
+      if ('contentHint' in nv) nv.contentHint = this.opts.content === 'detail' ? 'detail' : 'motion';
+      const old = this.stream.getVideoTracks()[0];
+      this.stream.removeTrack(old);
+      this.stream.addTrack(nv);
+      this.watchEnd(nv);
+      old.stop();
+      const sender = this.pc && this.pc.getSenders().find((x) => x.track === old || (x.track && x.track.kind === 'video'));
+      if (sender) {
+        await sender.replaceTrack(nv);
+        await this.tuneSender(sender);
+      }
+      if (this.events.onStream) this.events.onStream(this.stream);
     }
 
     async connect() {

@@ -23,6 +23,8 @@ import org.webrtc.RtpTransceiver;
 import org.webrtc.SdpObserver;
 import org.webrtc.SessionDescription;
 import org.webrtc.SurfaceViewRenderer;
+import org.webrtc.VideoFrame;
+import org.webrtc.VideoSink;
 import org.webrtc.VideoTrack;
 import org.webrtc.audio.JavaAudioDeviceModule;
 
@@ -74,7 +76,7 @@ class NativePlayer {
     private final PeerConnectionFactory factory;
     private PeerConnection pc;
     private VideoTrack videoTrack;
-    private boolean firstFrame;
+    private FrameGate gate;
     private Runnable dropTimer;
 
     // Stats bookkeeping
@@ -87,20 +89,7 @@ class NativePlayer {
         this.view = view;
         this.listener = listener;
         egl = EglBase.create();
-        view.init(egl.getEglBaseContext(), new RendererCommon.RendererEvents() {
-            public void onFirstFrameRendered() {
-                ui.post(new Runnable() {
-                    public void run() {
-                        if (!firstFrame) {
-                            firstFrame = true;
-                            NativePlayer.this.listener.onFirstFrame();
-                        }
-                    }
-                });
-            }
-
-            public void onFrameResolutionChanged(int w, int h, int rotation) { }
-        });
+        view.init(egl.getEglBaseContext(), null);
         view.setScalingType(RendererCommon.ScalingType.SCALE_ASPECT_FIT);
         view.setEnableHardwareScaler(false);
         view.setMirror(false);
@@ -175,12 +164,12 @@ class NativePlayer {
             old = pc;
             pc = null;
         }
-        if (videoTrack != null) {
-            try { videoTrack.removeSink(view); } catch (Throwable ignored) { }
-            videoTrack = null;
+        if (videoTrack != null && gate != null) {
+            try { videoTrack.removeSink(gate); } catch (Throwable ignored) { }
         }
+        videoTrack = null;
+        gate = null;
         if (old != null) old.dispose();
-        firstFrame = false;
         view.clearImage();
     }
 
@@ -189,6 +178,33 @@ class NativePlayer {
         view.release();
         factory.dispose();
         egl.release();
+    }
+
+    /** True once this session's first video frame reached the screen. */
+    boolean hasPicture() {
+        FrameGate g = gate;
+        return g != null && g.seen;
+    }
+
+    /**
+     * Passes frames to the screen and reports the first frame of every session. (The renderer's own
+     * first-frame event fires only once per app start, which left the code screen covering the
+     * picture from the second cast on.)
+     */
+    private class FrameGate implements VideoSink {
+        volatile boolean seen;
+
+        public void onFrame(VideoFrame frame) {
+            view.onFrame(frame);
+            if (!seen) {
+                seen = true;
+                ui.post(new Runnable() {
+                    public void run() {
+                        if (gate == FrameGate.this) listener.onFirstFrame();
+                    }
+                });
+            }
+        }
     }
 
     boolean active() {
@@ -299,9 +315,10 @@ class NativePlayer {
             ui.post(new Runnable() {
                 public void run() {
                     if (videoTrack == track) return;
-                    if (videoTrack != null) videoTrack.removeSink(view);
+                    if (videoTrack != null && gate != null) videoTrack.removeSink(gate);
                     videoTrack = (VideoTrack) track;
-                    videoTrack.addSink(view);
+                    gate = new FrameGate();
+                    videoTrack.addSink(gate);
                 }
             });
         }

@@ -1,8 +1,12 @@
 package com.projectorcast.receiver;
 
 import android.app.Activity;
+import android.app.PendingIntent;
+import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
+import android.content.pm.PackageInstaller;
 import android.content.SharedPreferences;
 import android.graphics.Color;
 import android.graphics.Typeface;
@@ -34,6 +38,7 @@ import org.webrtc.SurfaceViewRenderer;
 
 import java.io.File;
 import java.io.FileOutputStream;
+import java.io.OutputStream;
 import java.net.Inet4Address;
 import java.net.InetAddress;
 import java.net.NetworkInterface;
@@ -143,6 +148,41 @@ public class MainActivity extends Activity implements CastServer.Handler {
         }
 
         ui.postDelayed(ipWatcher, 3000);
+        registerReceiver(installResult, new IntentFilter(INSTALL_ACTION));
+    }
+
+    private static final String INSTALL_ACTION = "com.projectorcast.receiver.INSTALL_RESULT";
+
+    /** Android's installer reports back here: show its confirmation screen, or say why it failed. */
+    private final BroadcastReceiver installResult = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context c, Intent intent) {
+            int status = intent.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE);
+            if (status == PackageInstaller.STATUS_PENDING_USER_ACTION) {
+                Intent confirm = intent.getParcelableExtra(Intent.EXTRA_INTENT);
+                if (confirm != null) {
+                    confirm.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                    try {
+                        startActivity(confirm);
+                        return;
+                    } catch (Exception e) {
+                        updateFailed("the installer could not open (" + e.getMessage() + ")");
+                        return;
+                    }
+                }
+            }
+            if (status != PackageInstaller.STATUS_SUCCESS) {
+                String msg = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE);
+                updateFailed(msg != null ? msg : "status " + status);
+            }
+        }
+    };
+
+    private void updateFailed(String why) {
+        String text = "Update not installed: " + why + ". Install ProjectorCast.apk by USB instead.";
+        if (nativeCasting()) showIdle(text);
+        else js("stopCast(" + CastServer.quote(text) + ")");
+        Toast.makeText(this, text, Toast.LENGTH_LONG).show();
     }
 
     /** Re-shows the address if the projector changes Wi-Fi network. */
@@ -232,11 +272,22 @@ public class MainActivity extends Activity implements CastServer.Handler {
         }
 
         public void onConnected() {
+            // Sound but no picture after a few seconds: say so instead of leaving the code screen up silently.
+            ui.removeCallbacks(noPictureCheck);
+            ui.postDelayed(noPictureCheck, 6000);
             showBadge("Casting from " + sender + "  \u00b7  OK: stats  \u00b7  \u25c0 \u25b6: display mode " + mode + "/4", 6000);
         }
 
         public void onEnded(String reason) {
             showIdle(reason);
+        }
+    };
+
+    private final Runnable noPictureCheck = new Runnable() {
+        public void run() {
+            if (nativeCasting() && !player.hasPicture()) {
+                showBadge("No picture from the native player yet. Press \u25c0 \u25b6 to try another display mode.", 0);
+            }
         }
     };
 
@@ -377,8 +428,49 @@ public class MainActivity extends Activity implements CastServer.Handler {
     }
 
     @Override
-    public void onUpdate(byte[] apk) throws Exception {
+    public void onUpdate(final byte[] apk) throws Exception {
         if (apk.length < 4 || apk[0] != 'P' || apk[1] != 'K') throw new Exception("not an APK");
+        ui.post(new Runnable() {
+            public void run() {
+                if (nativeCasting()) showIdle("Installing the update... select Install when Android asks.");
+                else js("stopCast('Installing the update... select Install when Android asks.')");
+            }
+        });
+        try {
+            installWithSession(apk);
+        } catch (Exception sessionError) {
+            // Very old or unusual installers: fall back to handing Android the file.
+            installWithFile(apk, sessionError);
+        }
+    }
+
+    /** Android's PackageInstaller API: works without a file-viewer app and shows the system's confirmation. */
+    private void installWithSession(byte[] apk) throws Exception {
+        PackageInstaller installer = getPackageManager().getPackageInstaller();
+        PackageInstaller.SessionParams params = new PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL);
+        params.setAppPackageName(getPackageName());
+        int id = installer.createSession(params);
+        PackageInstaller.Session session = installer.openSession(id);
+        try {
+            OutputStream out = session.openWrite("update.apk", 0, apk.length);
+            try {
+                out.write(apk);
+                session.fsync(out);
+            } finally {
+                out.close();
+            }
+            Intent done = new Intent(INSTALL_ACTION).setPackage(getPackageName());
+            PendingIntent pi = PendingIntent.getBroadcast(this, id, done, PendingIntent.FLAG_UPDATE_CURRENT);
+            session.commit(pi.getIntentSender());
+        } catch (Exception e) {
+            session.abandon();
+            throw e;
+        } finally {
+            session.close();
+        }
+    }
+
+    private void installWithFile(byte[] apk, final Exception first) throws Exception {
         File dir = getExternalCacheDir();
         File file;
         if (dir != null) {
@@ -395,16 +487,16 @@ public class MainActivity extends Activity implements CastServer.Handler {
         final Uri uri = Uri.fromFile(file);
         ui.post(new Runnable() {
             public void run() {
-                if (nativeCasting()) showIdle("Installing the update...");
-                else js("stopCast('Installing the update...')");
-                Intent i = new Intent(Intent.ACTION_VIEW);
-                i.setDataAndType(uri, "application/vnd.android.package-archive");
-                i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_GRANT_READ_URI_PERMISSION);
-                try {
-                    startActivity(i);
-                } catch (Exception e) {
-                    Toast.makeText(MainActivity.this, "Could not open the installer: " + e.getMessage(), Toast.LENGTH_LONG).show();
+                for (String action : new String[]{Intent.ACTION_INSTALL_PACKAGE, Intent.ACTION_VIEW}) {
+                    Intent i = new Intent(action);
+                    i.setDataAndType(uri, "application/vnd.android.package-archive");
+                    i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                    try {
+                        startActivity(i);
+                        return;
+                    } catch (Exception ignored) { }
                 }
+                updateFailed(String.valueOf(first.getMessage()));
             }
         });
     }
@@ -479,6 +571,7 @@ public class MainActivity extends Activity implements CastServer.Handler {
         ui.removeCallbacks(ipWatcher);
         if (server != null) server.stop();
         if (player != null) player.release();
+        try { unregisterReceiver(installResult); } catch (Exception ignored) { }
         if (multicastLock != null && multicastLock.isHeld()) multicastLock.release();
         if (web != null) {
             web.destroy();

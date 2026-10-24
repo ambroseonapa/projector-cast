@@ -17,6 +17,10 @@
     <label for="code">Code shown on the projector</label>
     <input id="code" inputmode="numeric" maxlength="6" placeholder="123456" autocomplete="off">
 
+    <label>What to cast</label>
+    <div id="picker" class="picker"></div>
+    <p class="hint">Pick a <b>window</b> (for example the browser playing the match) to keep using the rest of your PC while only that window plays on the projector. Keep that window open (not minimised).</p>
+
     <label for="quality">Picture quality</label>
     <select id="quality"></select>
 
@@ -30,13 +34,6 @@
     <label class="check"><input type="checkbox" id="muteLocal" checked> Play sound only on the projector (mute this PC)</label>
     <p class="note" id="audioNote" hidden>Sound casting works on Windows only.</p>
 
-    <label for="source">What to cast</label>
-    <div class="source-row">
-      <select id="source"></select>
-      <button id="refresh" type="button" class="icon" title="Refresh the list" aria-label="Refresh the list">↻</button>
-    </div>
-    <img id="sourceThumb" alt="">
-    <p class="hint">Pick a <b>window</b> (for example the browser playing the match) to keep using the rest of your PC while only that window plays on the projector. Keep that window open (not minimised).</p>
 
     <details>
       <summary>Advanced</summary>
@@ -83,6 +80,8 @@
       <b>◀ ▶</b> on the projector remote to try its other display modes.</p>
     <details id="liveSettings">
       <summary>⚙ Settings while casting</summary>
+      <label>What to cast (switches straight away)</label>
+      <div id="livePicker" class="picker"></div>
       <label for="liveQuality">Picture quality</label>
       <select id="liveQuality"></select>
       <label for="liveContent">What are you showing?</label>

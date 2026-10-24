@@ -51,9 +51,10 @@ const RECEIVER = 'file://' + path.resolve(__dirname, '../../receiver-android/ass
   const errors = [];
   win.on('pageerror', (e) => errors.push(e.message));
   win.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
-  await win.waitForFunction(() => document.querySelectorAll('#source option').length > 0);
-  const screens = await win.locator('#source option').count();
-  const groups = await win.evaluate(() => [...document.querySelectorAll('#source optgroup')].map((g) => g.label));
+  await win.waitForFunction(() => document.querySelectorAll('#picker .pick-card').length > 0);
+  const screens = await win.locator('#picker .pick-card').count();
+  const groups = await win.locator('#picker .group').allTextContents();
+  assert(!(await win.evaluate(() => document.querySelector('#picker details').open)), 'picker starts folded');
   assert(groups.includes('Whole screen'), 'grouped picker: ' + groups);
   console.log(`PASS app window opened, ${screens} source(s) listed under ${groups.join(' / ')}`);
   await win.screenshot({ path: path.join(__dirname, 'out-app-idle.png') });
@@ -134,13 +135,16 @@ const RECEIVER = 'file://' + path.resolve(__dirname, '../../receiver-android/ass
     w.loadURL('data:text/html,<title>Match Window</title><body style="margin:0;background:%2300a050"><h1 style="color:white">MATCH</h1>');
   });
   await win.waitForTimeout(1500);
-  await win.click('#refresh');
+  await win.click('#picker summary');
+  await win.click('#picker .refresh');
   await win.waitForTimeout(800);
-  const names = await win.locator('#source option').allTextContents();
-  const groups2 = await win.evaluate(() => [...document.querySelectorAll('#source optgroup')].map((g) => g.label));
+  const names = await win.locator('#picker .pick-card span').allTextContents();
+  const groups2 = await win.locator('#picker .group').allTextContents();
   assert(names.includes('Match Window') && groups2.includes('One window'), 'window listed: ' + names + ' / ' + groups2);
   assert(!names.includes('Projector Cast'), 'own window is not offered');
-  await win.selectOption('#source', { label: 'Match Window' });
+  await win.click('#picker .pick-card[title="Match Window"]');
+  assert(!(await win.evaluate(() => document.querySelector('#picker details').open)), 'picker folds after a pick');
+  assert(/Match Window/.test(await win.textContent('#picker summary')), 'folded picker shows the pick');
   await win.click('#start');
   await win.waitForSelector('#update:not([hidden])', { timeout: 10000 });
   await win.click('#updateSkip');
@@ -156,6 +160,22 @@ const RECEIVER = 'file://' + path.resolve(__dirname, '../../receiver-android/ass
   assert(one.w < 1000 && one.h < 800 && one.px[1] > 120 && one.px[0] < 60, 'projector shows only the green window: ' + JSON.stringify(one));
   console.log(`PASS casting one window: projector shows just that window (${one.w}x${one.h})`);
   assert.strictEqual(await win.textContent('#castingWhat'), 'Window: Match Window');
+
+  // Switch to the whole screen while casting, without reconnecting.
+  const pcBefore = await receiver.evaluate(() => { window.__pcMark = pc; return true; });
+  await win.click('#liveSettings summary');
+  await win.click('#livePicker summary');
+  await win.locator('#livePicker .pick-card').first().click();
+  await receiver.waitForFunction(() => document.getElementById('video').videoWidth > 1000, null, { timeout: 15000 });
+  const same = await receiver.evaluate(() => window.__pcMark === pc);
+  assert(pcBefore && same, 'switched without a new connection');
+  assert(/Entire screen|Screen/.test(await win.textContent('#castingWhat')), await win.textContent('#castingWhat'));
+  console.log('PASS switched from the window to the whole screen while casting, same connection');
+  // ...and back to the window.
+  await win.click('#livePicker summary');
+  await win.click('#livePicker .pick-card[title="Match Window"]');
+  await receiver.waitForFunction(() => { const v = document.getElementById('video'); return v.videoWidth > 0 && v.videoWidth < 1000; }, null, { timeout: 15000 });
+  console.log('PASS switched back to the window');
   // Picked window closes before casting: must refuse, never fall back to the whole screen.
   await win.click('#stop');
   await receiver.waitForFunction(() => getComputedStyle(document.getElementById('idle')).display === 'flex', null, { timeout: 5000 });
@@ -179,7 +199,7 @@ const RECEIVER = 'file://' + path.resolve(__dirname, '../../receiver-android/ass
   const app2 = await _electron.launch({ executablePath: path.join(APP, 'node_modules/electron/dist/electron'), args: [APP, '--no-sandbox'] });
   const flags = await app2.evaluate(({ app: a }) => a.commandLine.getSwitchValue('disable-features'));
   const win2 = await app2.firstWindow();
-  await win2.waitForFunction(() => document.querySelectorAll('#source option').length > 0);
+  await win2.waitForFunction(() => document.querySelectorAll('#picker .pick-card').length > 0);
   assert(/AllowWgcScreenCapturer/.test(flags) && /WebRtcHideLocalIpsWithMdns/.test(flags), flags);
   assert.strictEqual(await win2.inputValue('#capture'), 'compat');
   console.log('PASS compatibility capture method is applied after restart: ' + flags);
