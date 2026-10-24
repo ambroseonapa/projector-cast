@@ -44,3 +44,8 @@ button { width: 100%; margin-top: 18px; padding: 12px; border: 0; border-radius:
 #preview { width: 100%; margin-top: 14px; border-radius: 8px; background: #000; aspect-ratio: 16 / 9; }
 #updateText { font-weight: 600; font-size: 16px; margin-bottom: 6px; }
 .error.note-ok { color: #8fe0ad; }
+.source-row { display: flex; gap: 8px; }
+.source-row select { flex: 1; min-width: 0; }
+.icon { width: 44px; margin: 0; padding: 0; background: #0e1824; border: 1px solid var(--line); font-size: 20px; }
+#sourceThumb { display: block; width: 100%; max-height: 200px; object-fit: contain; margin-top: 8px; border-radius: 8px; background: #000; }
+#liveSettings { text-align: left; }

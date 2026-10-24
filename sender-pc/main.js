@@ -12,7 +12,9 @@ const DISCOVERY_PORT = 47801;
 
 let win = null;
 let chosenScreenId = null;
+let chosenName = null;
 let wantAudio = true;
+let muteLocal = true;
 let sleepBlocker = null;
 
 function createWindow() {
@@ -61,10 +63,14 @@ app.whenReady().then(() => {
   session.defaultSession.setDisplayMediaRequestHandler(async (request, callback) => {
     try {
       const sources = await desktopCapturer.getSources({ types: ['screen', 'window'] });
-      const source = sources.find((s) => s.id === chosenScreenId) || sources[0];
+      // Never fall back to the whole screen when a window was picked: that would show everything on the PC.
+      const source = sources.find((s) => s.id === chosenScreenId)
+        || (chosenName && sources.find((s) => s.name === chosenName && s.id.split(':')[0] === String(chosenScreenId).split(':')[0]))
+        || (!chosenScreenId && sources.find((s) => s.id.startsWith('screen:')));
       if (!source) return callback({});
       const streams = { video: source };
-      if (wantAudio && request.audioRequested && process.platform === 'win32') streams.audio = 'loopback';
+      // loopbackWithMute: the sound plays on the projector only, not also on the PC's speakers.
+      if (wantAudio && request.audioRequested && process.platform === 'win32') streams.audio = muteLocal ? 'loopbackWithMute' : 'loopback';
       callback(streams);
     } catch (e) {
       callback({});
@@ -94,7 +100,9 @@ ipcMain.handle('set-capture-method', (_e, method) => {
   const next = { ...readSettings(), captureMethod: method === 'compat' ? 'compat' : 'auto' };
   fs.mkdirSync(path.dirname(settingsFile), { recursive: true });
   fs.writeFileSync(settingsFile, JSON.stringify(next));
-  app.relaunch();
+  // The portable .exe unpacks itself to a temp folder; restart the .exe itself, not the unpacked copy.
+  if (process.env.PORTABLE_EXECUTABLE_FILE) app.relaunch({ execPath: process.env.PORTABLE_EXECUTABLE_FILE, args: [] });
+  else app.relaunch();
   app.exit(0);
 });
 
@@ -120,7 +128,9 @@ ipcMain.handle('push-update', async (_e, { ip, code }) => {
 
 ipcMain.handle('prepare-capture', (_e, opts) => {
   chosenScreenId = opts.screenId || null;
+  chosenName = opts.screenName || null;
   wantAudio = !!opts.audio;
+  muteLocal = opts.muteLocal !== false;
   return { audioSupported: process.platform === 'win32' };
 });
 

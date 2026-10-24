@@ -112,25 +112,24 @@ async function run(browser, opts, label, gpu) {
         for (let i = 0; i < d.length; i += 4 * 997) if (d[i] + d[i + 1] + d[i + 2] > 60) lit++;
       }
       const v = document.getElementById('video');
-      return { mode: displayMode, saved: window.__savedMode, videoShown: getComputedStyle(v).display !== 'none' && v.getBoundingClientRect().width > 100,
+      return { mode: displayMode, videoShown: getComputedStyle(v).display !== 'none' && v.getBoundingClientRect().width > 100,
         gpu: v.className === 'gpu', canvasShown: getComputedStyle(c).display !== 'none', lit, playing: !v.paused, t: v.currentTime };
     });
-    await receiver.evaluate(() => cycleMode(1));
+    await receiver.evaluate(() => setWebMode(2));
     const m2 = await look();
-    assert(m2.mode === 2 && m2.saved === 2 && m2.videoShown && m2.gpu && !m2.canvasShown, 'mode 2 GPU layer: ' + JSON.stringify(m2));
-    await receiver.evaluate(() => cycleMode(1));
+    assert(m2.mode === 2 && m2.videoShown && m2.gpu && !m2.canvasShown, 'mode 2 GPU layer: ' + JSON.stringify(m2));
+    await receiver.evaluate(() => setWebMode(3));
     await receiver.waitForTimeout(1000);
     const m3 = await look();
     await receiver.waitForTimeout(1000);
     const m3b = await look();
     assert(m3.mode === 3 && m3.canvasShown && !m3.videoShown && m3.lit > 20 && m3b.t > m3.t + 0.5 && m3b.playing, 'mode 3 canvas paints the live picture: ' + JSON.stringify(m3) + JSON.stringify(m3b));
-    await receiver.evaluate(() => cycleMode(1));
+    await receiver.evaluate(() => setWebMode(1));
     const m1 = await look();
     assert(m1.mode === 1 && m1.videoShown && !m1.canvasShown && !m1.gpu, 'back to mode 1: ' + JSON.stringify(m1));
-    await receiver.evaluate(() => cycleMode(-1));
-    assert.strictEqual((await look()).mode, 3, 'left arrow goes backwards');
-    await receiver.evaluate(() => cycleMode(1));
-    console.log('PASS display modes 1 (standard), 2 (GPU layer), 3 (canvas) all show the picture');
+    await receiver.evaluate(() => setWebMode(9));
+    assert.strictEqual((await look()).mode, 1, 'unknown web mode falls back to standard');
+    console.log('PASS web display modes (standard, GPU layer, canvas) all show the picture');
   }
   console.log(`  [${label}] freezes=${s.freezes} dropped=${s.dropped}`);
   assert((s.freezes || 0) <= 1, 'at most one freeze: ' + s.freezes);

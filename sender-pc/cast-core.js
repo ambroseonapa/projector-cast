@@ -6,10 +6,10 @@
  */
 (function (global) {
   const QUALITY = {
-    p720_30: { label: 'HD 720p · 30 fps (best for most projectors)', width: 1280, height: 720, fps: 30, kbps: 5000 },
+    p720_60: { label: 'HD 720p · 60 fps (smoothest, recommended)', width: 1280, height: 720, fps: 60, kbps: 6000 },
+    p720_30: { label: 'HD 720p · 30 fps (weak Wi-Fi)', width: 1280, height: 720, fps: 30, kbps: 5000 },
     p1080_60: { label: 'Full HD 1080p · 60 fps (strong PC and projector)', width: 1920, height: 1080, fps: 60, kbps: 12000 },
-    p1080_30: { label: 'Full HD 1080p · 30 fps (weaker Wi-Fi)', width: 1920, height: 1080, fps: 30, kbps: 8000 },
-    p720_60: { label: 'HD 720p · 60 fps (weak Wi-Fi)', width: 1280, height: 720, fps: 60, kbps: 6000 },
+    p1080_30: { label: 'Full HD 1080p · 30 fps', width: 1920, height: 1080, fps: 30, kbps: 8000 },
     p4k_30: { label: '4K · 30 fps (only for 4K projectors)', width: 3840, height: 2160, fps: 30, kbps: 25000 },
   };
 
@@ -151,6 +151,7 @@
       this.pc = null;
       this.stopped = false;
       this.retries = 0;
+      this.weakTimer = null;
       this.statsTimer = null;
     }
 
@@ -202,6 +203,14 @@
         { type: 'offer', sdp: pc.localDescription.sdp, buffer: this.opts.buffer == null ? 150 : this.opts.buffer });
       if (pc !== this.pc) return;
       await pc.setRemoteDescription({ type: 'answer', sdp: tuneAnswer(unhideAddresses(answer.sdp, this.opts.ip), this.q.kbps) });
+      // The projector says goodbye (DTLS close) when it drops the connection, e.g. on a display-mode
+      // switch: reconnect at once instead of waiting for the connection to time out.
+      const dtls = vt.sender.transport;
+      if (dtls) {
+        dtls.addEventListener('statechange', () => {
+          if (pc === this.pc && (dtls.state === 'closed' || dtls.state === 'failed')) this.reconnect();
+        });
+      }
       await this.tuneSender(vt.sender);
       for (const s of audioSenders) await this.tuneAudio(s);
     }
@@ -240,23 +249,51 @@
     onIce(pc) {
       if (pc !== this.pc || this.stopped) return;
       const st = pc.iceConnectionState;
+      clearTimeout(this.weakTimer);
       if (st === 'connected' || st === 'completed') {
         this.retries = 0;
         this.events.onState('Casting to ' + (this.opts.name || 'projector'), 'live');
         this.startStats();
       } else if (st === 'disconnected') {
         this.events.onState('Connection weak, holding on...', 'busy');
+        // The projector closes the connection when its display mode is switched: reconnect quickly
+        // instead of waiting ~30 s for the browser to declare the connection failed.
+        this.weakTimer = setTimeout(() => {
+          if (pc === this.pc && pc.iceConnectionState === 'disconnected') this.reconnect();
+        }, 3000);
       } else if (st === 'failed') {
         this.reconnect();
       }
     }
 
     reconnect() {
-      if (this.stopped) return;
-      if (this.retries >= 5) return this.stop('Lost the projector. Check both are on the same network.');
+      if (this.stopped || this.reconnecting) return;
+      if (this.retries >= 8) return this.stop('Lost the projector. Check both are on the same network.');
       this.retries++;
-      this.events.onState(`Reconnecting (${this.retries}/5)...`, 'busy');
-      setTimeout(() => this.connect().catch(() => this.reconnect()), 1500);
+      this.reconnecting = true;
+      this.events.onState(`Reconnecting (${this.retries}/8)...`, 'busy');
+      setTimeout(() => {
+        this.reconnecting = false;
+        this.connect().catch(() => this.reconnect());
+      }, 1500);
+    }
+
+    /** Change quality / content / delay while casting: re-tunes the capture and reconnects (about a second). */
+    async update(changes) {
+      if (this.stopped) return;
+      Object.assign(this.opts, changes);
+      this.q = QUALITY[this.opts.quality] || this.q;
+      const v = this.stream.getVideoTracks()[0];
+      if ('contentHint' in v) v.contentHint = this.opts.content === 'detail' ? 'detail' : 'motion';
+      try {
+        await v.applyConstraints({
+          width: { ideal: this.q.width, max: this.q.width },
+          height: { ideal: this.q.height, max: this.q.height },
+          frameRate: { ideal: this.q.fps, max: this.q.fps },
+        });
+      } catch (_) { /* keep current capture size; the sender still scales down */ }
+      this.retries = 0;
+      await this.connect();
     }
 
     startStats() {
@@ -296,6 +333,7 @@
 
     closePc() {
       clearInterval(this.statsTimer);
+      clearTimeout(this.weakTimer);
       if (this.pc) {
         const pc = this.pc;
         this.pc = null;

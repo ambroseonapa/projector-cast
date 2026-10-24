@@ -5,8 +5,10 @@ cd "$(dirname "$0")/tests"
 PW=${PLAYWRIGHT_DIR:-$(npm root -g)/playwright}
 export PLAYWRIGHT_DIR="$PW"
 rm -rf jvm/out && mkdir -p jvm/out
-javac -nowarn -d jvm/out ../receiver-android/src/com/projectorcast/receiver/CastServer.java jvm/*.java
+javac -nowarn -d jvm/out ../receiver-android/src/com/projectorcast/receiver/CastServer.java \
+  ../receiver-android/src/com/projectorcast/receiver/SdpTools.java jvm/*.java
 echo "== Projector server ==";  java -cp jvm/out ServerTest
+echo "== Native player SDP rules ==";  node node/sdp-parity.test.js
 java -cp jvm/out RunServer >/dev/null & S1=$!; sleep 1
 echo "== PC network code =="; node node/main-network.test.js || { kill $S1; exit 1; }
 kill $S1

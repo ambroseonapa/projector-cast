@@ -1,13 +1,13 @@
 {
   "name": "projector-cast",
   "productName": "Projector Cast",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "Mirror your PC screen and sound to an Android TV projector with a code.",
   "main": "main.js",
   "private": true,
   "scripts": {
     "start": "electron .",
-    "dist:win": "electron-builder --win portable zip --x64"
+    "dist:win": "electron-builder --win nsis --x64 --publish never"
   },
   "build": {
     "appId": "com.projectorcast.sender",
@@ -25,10 +25,10 @@
     },
     "artifactName": "ProjectorCast-${version}-${arch}.${ext}",
     "win": {
-      "signAndEditExecutable": false
-    },
-    "portable": {
-      "artifactName": "ProjectorCast.exe"
+      "signAndEditExecutable": false,
+      "target": [
+        "nsis"
+      ]
     },
     "extraResources": [
       {
@@ -39,10 +39,21 @@
         "from": "../dist/ProjectorCast.version",
         "to": "ProjectorCast.version"
       }
-    ]
+    ],
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Projector Cast",
+      "artifactName": "ProjectorCast-Setup-${version}.exe",
+      "runAfterFinish": true
+    },
+    "publish": null
   },
   "devDependencies": {
     "electron": "33.2.1",
     "electron-builder": "25.1.8"
-  }
+  },
+  "author": "Ambrose Onapa"
 }

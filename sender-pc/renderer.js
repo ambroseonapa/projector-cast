@@ -22,43 +22,39 @@ function setLive(on) {
   $('live').hidden = !on;
 }
 
+let sources = [];
+
 async function loadScreens() {
-  const list = await window.cast.listScreens().catch(() => []);
-  const box = $('screens');
-  box.textContent = '';
-  if (!list.length) {
-    box.textContent = 'Nothing to cast was found.';
+  sources = await window.cast.listScreens().catch(() => []);
+  const sel = $('source');
+  sel.textContent = '';
+  if (!sources.length) {
+    sel.append(new Option('Nothing to cast was found', ''));
+    $('sourceThumb').removeAttribute('src');
     return;
   }
-  if (!list.some((s) => s.id === selectedScreen)) selectedScreen = list[0].id;
-  for (const [kind, title] of [['screen', 'Whole screen'], ['window', 'One window']]) {
-    const items = list.filter((s) => s.kind === kind);
-    if (!items.length) continue;
-    const head = document.createElement('div');
-    head.className = 'group';
-    head.textContent = title;
-    const grid = document.createElement('div');
-    grid.className = 'screens';
-    items.forEach((s) => {
-      const b = document.createElement('button');
-      b.type = 'button';
-      b.className = 'screen' + (s.id === selectedScreen ? ' selected' : '');
-      b.title = s.name;
-      const img = document.createElement('img');
-      img.src = s.thumb;
-      img.alt = '';
-      const label = document.createElement('span');
-      label.textContent = s.name.length > 40 ? s.name.slice(0, 38) + '…' : s.name;
-      b.append(img, label);
-      b.addEventListener('click', () => {
-        selectedScreen = s.id;
-        box.querySelectorAll('.screen').forEach((el) => el.classList.remove('selected'));
-        b.classList.add('selected');
-      });
-      grid.append(b);
-    });
-    box.append(head, grid);
+  if (!sources.some((s) => s.id === selectedScreen)) {
+    const remembered = store('sourceName');
+    const byName = sources.find((s) => s.name === remembered);
+    selectedScreen = (byName || sources[0]).id;
   }
+  for (const [kind, title] of [['screen', 'Whole screen'], ['window', 'One window']]) {
+    const items = sources.filter((s) => s.kind === kind);
+    if (!items.length) continue;
+    const group = document.createElement('optgroup');
+    group.label = title;
+    items.forEach((s) => group.append(new Option(s.name.length > 60 ? s.name.slice(0, 58) + '…' : s.name, s.id)));
+    sel.append(group);
+  }
+  sel.value = selectedScreen;
+  showThumb();
+}
+
+function selectedSource() { return sources.find((s) => s.id === selectedScreen) || null; }
+
+function showThumb() {
+  const s = selectedSource();
+  if (s) $('sourceThumb').src = s.thumb;
 }
 
 /** Resolves true to update the projector first, false to cast as is. */
@@ -87,7 +83,7 @@ async function init() {
   }
   $('code').value = store('code') || '';
   $('ip').value = store('ip') || '';
-  $('quality').value = (QUALITY[store('quality')] && store('quality')) || 'p720_30';
+  $('quality').value = (QUALITY[store('quality')] && store('quality')) || 'p720_60';
   $('content').value = store('content') || 'motion';
   $('codec').value = store('codec') || 'h264';
   $('buffer').value = store('buffer') || '150';
@@ -99,12 +95,24 @@ async function init() {
     window.cast.setCaptureMethod($('capture').value);
   });
   $('audio').checked = store('audio') !== '0';
+  $('muteLocal').checked = store('muteLocal') !== '0';
+  $('source').addEventListener('change', () => {
+    selectedScreen = $('source').value;
+    const s = selectedSource();
+    if (s) store('sourceName', s.name);
+    showThumb();
+  });
+  $('refresh').addEventListener('click', loadScreens);
+  for (const [key, q] of Object.entries(QUALITY)) $('liveQuality').append(new Option(q.label, key));
+  $('applyLive').addEventListener('click', applyLive);
 
   const platform = await window.cast.platform();
   if (platform !== 'win32') {
     $('audioNote').hidden = false;
     $('audio').checked = false;
     $('audio').disabled = true;
+    $('muteLocal').checked = false;
+    $('muteLocal').disabled = true;
   }
 
   $('code').addEventListener('input', () => { $('code').value = $('code').value.replace(/\D/g, '').slice(0, 6); });
@@ -124,6 +132,10 @@ async function start() {
 
   ['code', 'ip', 'quality', 'content', 'codec', 'buffer'].forEach((k) => store(k, $(k).value.trim()));
   store('audio', $('audio').checked ? '1' : '0');
+  store('muteLocal', $('muteLocal').checked ? '1' : '0');
+  await loadScreens();
+  const source = selectedSource();
+  if (!source) return showError('Pick a screen or window to cast.');
 
   $('start').disabled = true;
   $('start').textContent = 'Looking for the projector...';
@@ -160,7 +172,9 @@ async function start() {
       return;
     }
 
-    await window.cast.prepareCapture({ screenId: selectedScreen, audio: $('audio').checked });
+    await window.cast.prepareCapture({
+      screenId: source.id, screenName: source.name, audio: $('audio').checked, muteLocal: $('muteLocal').checked,
+    });
     const opts = {
       ip: target.ip,
       name: target.name,
@@ -175,6 +189,11 @@ async function start() {
     $('state').textContent = 'Connecting...';
     $('stats').textContent = '';
     $('dot').className = 'dot';
+    $('castingWhat').textContent = (source.kind === 'window' ? 'Window: ' : '') + source.name;
+    $('liveQuality').value = opts.quality;
+    $('liveContent').value = opts.content;
+    $('liveBuffer').value = String(opts.buffer);
+    $('liveSettings').open = false;
 
     session = new CastSession(window.cast, opts, {
       onState: (text, kind) => {
@@ -210,9 +229,29 @@ async function start() {
   }
 }
 
+async function applyLive() {
+  if (!session) return;
+  const changes = { quality: $('liveQuality').value, content: $('liveContent').value, buffer: parseInt($('liveBuffer').value, 10) };
+  store('quality', changes.quality);
+  store('content', changes.content);
+  store('buffer', String(changes.buffer));
+  $('applyLive').disabled = true;
+  try {
+    await session.update(changes);
+  } catch (e) {
+    showError(cleanError(e));
+  } finally {
+    $('applyLive').disabled = false;
+  }
+}
+
 function cleanError(e) {
   const msg = String((e && e.message) || e).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
-  if (/NotAllowedError|Permission denied/i.test(msg)) return 'Screen capture was blocked. Allow screen recording for Projector Cast and try again.';
+  if (/NotAllowedError|AbortError|NotReadableError|Permission denied|Could not start/i.test(msg)) {
+    const s = selectedSource();
+    if (s && s.kind === 'window') return `Could not capture the window "${s.name}". Make sure it is open and not minimised, press ↻ and pick it again.`;
+    return 'Screen capture was blocked. Allow screen recording for Projector Cast and try again.';
+  }
   return msg;
 }
 

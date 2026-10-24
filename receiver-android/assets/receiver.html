@@ -55,23 +55,19 @@ var statsOn = false, reconnects = 0, sizeChanges = 0, lastSize = '', prev = {};
 var statsEl = document.getElementById('stats');
 var canvas = document.getElementById('canvas');
 var ctx2d = canvas.getContext('2d');
-var MODES = ['', 'Standard', 'GPU layer', 'Canvas'];
 var displayMode = 1, painting = false;
 
-function showInfo(code, ips, name, mode, version) {
+function showInfo(code, ips, name, modeText, version) {
   document.getElementById('code').textContent = code;
   document.getElementById('ip').textContent = ips ? ('Projector address: ' + ips) : 'No network connection';
-  if (mode) displayMode = mode;
-  if (version) document.getElementById('version').textContent = 'v' + version + '  \u00b7  display mode ' + displayMode;
+  if (version) document.getElementById('version').textContent = 'v' + version + '  \u00b7  display mode ' + modeText + '  (\u25c0 \u25b6 to change)';
 }
 
-// Three ways of putting the picture on screen. Some TV chips flicker with one and not another,
-// so the remote's left/right arrows switch between them while casting (the choice is remembered).
-function cycleMode(step) {
-  displayMode = ((displayMode - 1 + step + 3) % 3) + 1;
-  if (window.Cast && Cast.setDisplayMode) Cast.setDisplayMode(displayMode);
+// How this page draws the picture when the projector app uses a web display mode
+// (1 = standard video, 2 = GPU layer, 3 = canvas). The app itself picks the mode.
+function setWebMode(m) {
+  displayMode = m >= 1 && m <= 3 ? m : 1;
   applyMode();
-  if (pc) showBadge('Display mode ' + displayMode + '/3: ' + MODES[displayMode] + '   (\u25c0 \u25b6 to change)', 4000);
 }
 
 function applyMode() {
@@ -253,7 +249,7 @@ function handleOffer(id, offerText, sender, senderIp) {
     var st = conn.iceConnectionState;
     if (st === 'connected' || st === 'completed') {
       clearTimeout(dropTimer);
-      showBadge('Casting from ' + sender + '  \u00b7  OK: stats  \u00b7  \u25c0 \u25b6: display mode ' + displayMode, 6000);
+      showBadge('Casting from ' + sender + '  \u00b7  OK: stats  \u00b7  \u25c0 \u25b6: display mode', 6000);
       clearInterval(statsTimer);
       statsTimer = setInterval(function () { readStats(conn); }, 1000);
     } else if (st === 'disconnected') {

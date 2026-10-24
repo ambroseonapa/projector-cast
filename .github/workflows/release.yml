@@ -1,0 +1,74 @@
+name: Release
+
+# Push a tag like v1.3.0 (or run it by hand from the Actions tab) to build both apps
+# and publish them on the repository's Releases page.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apk:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Android build tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq aapt apksigner android-sdk-platform-23 zipalign unzip
+      - name: Build projector app (APK)
+        run: receiver-android/build.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: apk
+          path: |
+            dist/ProjectorCast.apk
+            dist/ProjectorCast.version
+
+  windows:
+    needs: apk
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: apk
+          path: dist
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: sender-pc/package-lock.json
+      - name: Build PC app (Windows installer, bundles the APK)
+        working-directory: sender-pc
+        run: |
+          npm ci
+          npx electron-builder --win nsis --x64 --publish never
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: dist/pc/ProjectorCast-Setup-*.exe
+
+  release:
+    needs: [apk, windows]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: out
+          merge-multiple: true
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_type == 'tag' && github.ref_name || format('build-{0}', github.run_number) }}
+          name: Projector Cast ${{ github.ref_type == 'tag' && github.ref_name || format('build {0}', github.run_number) }}
+          body: |
+            **Downloads** (under Assets below)
+            - **ProjectorCast-Setup-….exe**: install on your Windows PC.
+            - **ProjectorCast.apk**: install on the projector by USB the first time; after that the PC app updates it.
+          files: |
+            out/ProjectorCast.apk
+            out/ProjectorCast-Setup-*.exe

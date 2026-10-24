@@ -51,9 +51,9 @@ const RECEIVER = 'file://' + path.resolve(__dirname, '../../receiver-android/ass
   const errors = [];
   win.on('pageerror', (e) => errors.push(e.message));
   win.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
-  await win.waitForSelector('.screen');
-  const screens = await win.locator('.screen').count();
-  const groups = await win.locator('.group').allTextContents();
+  await win.waitForFunction(() => document.querySelectorAll('#source option').length > 0);
+  const screens = await win.locator('#source option').count();
+  const groups = await win.evaluate(() => [...document.querySelectorAll('#source optgroup')].map((g) => g.label));
   assert(groups.includes('Whole screen'), 'grouped picker: ' + groups);
   console.log(`PASS app window opened, ${screens} source(s) listed under ${groups.join(' / ')}`);
   await win.screenshot({ path: path.join(__dirname, 'out-app-idle.png') });
@@ -77,7 +77,8 @@ const RECEIVER = 'file://' + path.resolve(__dirname, '../../receiver-android/ass
   // Relay projector reports version 2; this PC app carries version 3, so it offers the update first.
   await win.waitForSelector('#update:not([hidden])', { timeout: 10000 });
   const offerText = await win.textContent('#updateText');
-  assert(/2 → 3/.test(offerText), offerText);
+  const bundledVersion = fs.readFileSync(path.resolve(__dirname, '../../dist/ProjectorCast.version'), 'utf8').trim();
+  assert(offerText.includes(`2 → ${bundledVersion}`), offerText);
   console.log('PASS out-of-date projector app detected: "' + offerText + '"');
   await win.screenshot({ path: path.join(__dirname, 'out-app-update.png') });
   await win.click('#updateSkip');
@@ -89,6 +90,22 @@ const RECEIVER = 'file://' + path.resolve(__dirname, '../../receiver-android/ass
   const preview = await win.evaluate(() => { const v = document.getElementById('preview'); return { w: v.videoWidth, t: v.currentTime }; });
   assert(preview.w > 0 && preview.t > 1, 'PC preview plays: ' + JSON.stringify(preview));
   console.log('PASS PC preview shows what is sent');
+
+  // Change quality while casting (1080p60 -> 720p30) without stopping.
+  await win.click('#liveSettings summary');
+  await win.selectOption('#liveQuality', 'p720_30');
+  await win.click('#applyLive');
+  await receiver.waitForFunction(() => { const v = document.getElementById('video'); return v.videoWidth === 1280 && v.videoHeight === 720 && !v.paused; }, null, { timeout: 20000 });
+  console.log('PASS quality changed while casting: projector now gets 1280x720');
+
+  // Projector closes the connection (as when its display mode is switched): the PC reconnects by itself.
+  const t0 = Date.now();
+  await receiver.evaluate(() => stopCast('Display mode changed. Reconnecting...'));
+  await receiver.waitForFunction(() => getComputedStyle(document.getElementById('idle')).display === 'none' && document.getElementById('video').videoWidth > 0, null, { timeout: 25000 });
+  console.log(`PASS PC reconnected by itself ${((Date.now() - t0) / 1000).toFixed(1)} s after the projector dropped the connection`);
+  const reconnectSecs = (Date.now() - t0) / 1000;
+  assert(reconnectSecs < 6, 'reconnect should take a few seconds, took ' + reconnectSecs);
+  await receiver.waitForTimeout(3000);
   await win.screenshot({ path: path.join(__dirname, 'out-app-live.png') });
 
   const rx = await receiver.evaluate(() => {
@@ -117,13 +134,13 @@ const RECEIVER = 'file://' + path.resolve(__dirname, '../../receiver-android/ass
     w.loadURL('data:text/html,<title>Match Window</title><body style="margin:0;background:%2300a050"><h1 style="color:white">MATCH</h1>');
   });
   await win.waitForTimeout(1500);
-  await win.evaluate(() => loadScreens());
-  await win.waitForTimeout(500);
-  const names = await win.locator('.screen span').allTextContents();
-  const groups2 = await win.locator('.group').allTextContents();
+  await win.click('#refresh');
+  await win.waitForTimeout(800);
+  const names = await win.locator('#source option').allTextContents();
+  const groups2 = await win.evaluate(() => [...document.querySelectorAll('#source optgroup')].map((g) => g.label));
   assert(names.includes('Match Window') && groups2.includes('One window'), 'window listed: ' + names + ' / ' + groups2);
   assert(!names.includes('Projector Cast'), 'own window is not offered');
-  await win.locator('.screen', { hasText: 'Match Window' }).click();
+  await win.selectOption('#source', { label: 'Match Window' });
   await win.click('#start');
   await win.waitForSelector('#update:not([hidden])', { timeout: 10000 });
   await win.click('#updateSkip');
@@ -138,10 +155,17 @@ const RECEIVER = 'file://' + path.resolve(__dirname, '../../receiver-android/ass
   });
   assert(one.w < 1000 && one.h < 800 && one.px[1] > 120 && one.px[0] < 60, 'projector shows only the green window: ' + JSON.stringify(one));
   console.log(`PASS casting one window: projector shows just that window (${one.w}x${one.h})`);
-  await receiver.screenshot({ path: path.join(__dirname, 'out-projector-window.png') });
+  assert.strictEqual(await win.textContent('#castingWhat'), 'Window: Match Window');
+  // Picked window closes before casting: must refuse, never fall back to the whole screen.
   await win.click('#stop');
   await receiver.waitForFunction(() => getComputedStyle(document.getElementById('idle')).display === 'flex', null, { timeout: 5000 });
-
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().find((w) => w.getTitle() === 'Match Window').close());
+  await win.waitForTimeout(500);
+  await win.evaluate(() => window.cast.prepareCapture({ screenId: selectedScreen, screenName: 'Match Window', audio: false }));
+  const refused = await win.evaluate(() => navigator.mediaDevices.getDisplayMedia({ video: true }).then((s) => { s.getTracks().forEach((t) => t.stop()); return false; }, () => true));
+  assert(refused, 'closed window is not silently replaced by the whole screen');
+  console.log('PASS a closed window is refused instead of casting the whole screen');
+  await receiver.screenshot({ path: path.join(__dirname, 'out-projector-window.png') });
   const userData = await app.evaluate(({ app: a }) => a.getPath('userData'));
   assert.strictEqual(await win.inputValue('#capture'), 'auto');
   assert(seenIps.every((ip) => /^\d+\.\d+\.\d+\.\d+$/.test(ip)), 'PC address passed to receiver: ' + seenIps);
@@ -155,7 +179,7 @@ const RECEIVER = 'file://' + path.resolve(__dirname, '../../receiver-android/ass
   const app2 = await _electron.launch({ executablePath: path.join(APP, 'node_modules/electron/dist/electron'), args: [APP, '--no-sandbox'] });
   const flags = await app2.evaluate(({ app: a }) => a.commandLine.getSwitchValue('disable-features'));
   const win2 = await app2.firstWindow();
-  await win2.waitForSelector('.screen');
+  await win2.waitForFunction(() => document.querySelectorAll('#source option').length > 0);
   assert(/AllowWgcScreenCapturer/.test(flags) && /WebRtcHideLocalIpsWithMdns/.test(flags), flags);
   assert.strictEqual(await win2.inputValue('#capture'), 'compat');
   console.log('PASS compatibility capture method is applied after restart: ' + flags);
