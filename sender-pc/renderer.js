@@ -96,7 +96,7 @@ async function copyReport() {
     `Projector Cast report  ${new Date().toISOString()}`,
     `PC app ${info.version || '?'}  ·  ${info.os || '?'}`,
     `Settings: quality ${$('quality').value} · content ${$('content').value} · codec ${$('codec').value} · buffer ${$('buffer').value} ms`
-      + ` · capture ${$('capture').value} · source ${s ? s.kind + ' "' + s.name + '"' : '?'} · sound ${$('audio').checked ? 'on' : 'off'}`,
+      + ` · capture ${$('capture').value} · source ${s ? s.kind + ' "' + s.name + '"' : '?'} · sound ${!$('audio').checked ? 'off' : !$('appSound').hidden && $('soundFrom').value === 'app' ? 'app "' + ($('soundApp').selectedOptions[0] || {}).textContent + '"' : 'on'}`,
     `Projector: app ${p.app || '?'} · ${p.device || '?'} · Android ${p.android || '?'} · ${p.webview || '?'}`,
     `Projector mode: ${p.mode || '?'} · decoding: ${p.decoding || '?'} · ${p.casting || '?'}`,
     '',
@@ -322,6 +322,59 @@ async function vddAction(button, work, busyText) {
   }
 }
 
+// ---- Sound of one app (Windows) ----
+
+let appAudio = null;
+
+async function refreshAudioApps() {
+  const sel = $('soundApp');
+  const keep = sel.selectedOptions[0] ? sel.selectedOptions[0].textContent : store('soundApp');
+  const apps = await window.cast.listAudioApps().catch(() => []);
+  sel.replaceChildren(...apps.map((a) => new Option(a.name, String(a.pid))));
+  if (!apps.length) sel.append(new Option('No apps open', ''));
+  const match = apps.find((a) => a.name === keep);
+  if (match) sel.value = String(match.pid);
+}
+
+function updateSoundUi() {
+  const app = $('audio').checked && $('soundFrom').value === 'app';
+  $('soundFrom').disabled = !$('audio').checked;
+  $('soundApp').hidden = !app;
+  $('muteLabel').textContent = app ? 'Mute this app on the PC while casting' : 'Mute this PC while casting';
+  if (app) refreshAudioApps();
+}
+
+/** Starts the helper and returns an audio track playing its PCM. */
+async function startAppAudio(pid, mute) {
+  stopAppAudio();
+  const ctx = new AudioContext({ sampleRate: 48000 });
+  await ctx.audioWorklet.addModule('app-audio-worklet.js');
+  await ctx.resume();
+  const node = new AudioWorkletNode(ctx, 'pcm-player', { numberOfInputs: 0, outputChannelCount: [2] });
+  const dest = ctx.createMediaStreamDestination();
+  dest.channelCount = 2;
+  node.connect(dest);
+  const off = window.cast.onAppAudio((data) => node.port.postMessage(data));
+  appAudio = { ctx, off };
+  try {
+    await window.cast.appAudioStart(pid, mute);
+  } catch (e) {
+    stopAppAudio();
+    throw new Error(`Could not capture the app's sound: ${cleanError(e)}`);
+  }
+  const track = dest.stream.getAudioTracks()[0];
+  if ('contentHint' in track) track.contentHint = 'music';
+  return track;
+}
+
+function stopAppAudio() {
+  if (!appAudio) return;
+  window.cast.appAudioStop();
+  appAudio.off();
+  appAudio.ctx.close().catch(() => {});
+  appAudio = null;
+}
+
 // ---- Preview window: what is cast, without the projector's delay (useful for a second screen) ----
 
 let previewWin = null;
@@ -379,6 +432,19 @@ async function init() {
       $(id).checked = false;
       $(id).disabled = true;
     }
+  }
+
+  if (await window.cast.appAudioSupported()) {
+    $('appSound').hidden = false;
+    $('soundFrom').value = store('soundFrom') === 'app' ? 'app' : 'pc';
+    $('soundFrom').addEventListener('change', () => { store('soundFrom', $('soundFrom').value); updateSoundUi(); });
+    $('soundApp').addEventListener('change', () => store('soundApp', $('soundApp').selectedOptions[0].textContent));
+    $('audio').addEventListener('change', updateSoundUi);
+    window.cast.onAppAudioEnded((why) => {
+      $('liveHint').textContent = `The app's sound stopped (${why}). Start casting again to send it.`;
+      $('liveHint').hidden = false;
+    });
+    updateSoundUi();
   }
 
   $('applyLive').addEventListener('click', applyLive);
@@ -448,8 +514,17 @@ async function start() {
       return;
     }
 
+    // One app's sound: captured by the helper instead of the system sound.
+    const appMode = $('audio').checked && !$('appSound').hidden && $('soundFrom').value === 'app';
+    let extraAudio = null;
+    if (appMode) {
+      await refreshAudioApps();
+      const pid = parseInt($('soundApp').value, 10);
+      if (!pid) throw new Error('Choose the app whose sound to send (open it first).');
+      extraAudio = await startAppAudio(pid, $('muteLocal').checked);
+    }
     await window.cast.prepareCapture({
-      screenId: source.id, screenName: source.name, audio: $('audio').checked, muteLocal: $('muteLocal').checked,
+      screenId: source.id, screenName: source.name, audio: $('audio').checked && !appMode, muteLocal: $('muteLocal').checked,
     });
     const opts = {
       ip: target.ip,
@@ -458,7 +533,8 @@ async function start() {
       quality: $('quality').value,
       content: $('content').value,
       codec: $('codec').value,
-      audio: $('audio').checked,
+      audio: $('audio').checked && !appMode,
+      extraAudio,
       buffer: parseInt($('buffer').value, 10),
     };
     setLive(true);
@@ -496,6 +572,7 @@ async function start() {
       },
       onEnded: (reason) => {
         if (previewWin && !previewWin.closed) previewWin.close();
+        stopAppAudio();
         session = null;
         stopReport();
         $('copyLast').hidden = timeline.length === 0;
@@ -510,6 +587,7 @@ async function start() {
     startReport({ ip: target.ip, code });
     await session.start();
   } catch (e) {
+    stopAppAudio();
     if (session) {
       const s = session;
       session = null;

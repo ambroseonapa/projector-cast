@@ -29,7 +29,15 @@
     </select>
 
     <label class="check"><input type="checkbox" id="audio" checked> Send sound</label>
-    <label class="check"><input type="checkbox" id="muteLocal" checked> Mute this PC while casting</label>
+    <div id="appSound" hidden>
+      <label for="soundFrom">Sound from</label>
+      <select id="soundFrom">
+        <option value="pc">Whole PC</option>
+        <option value="app">One app</option>
+      </select>
+      <select id="soundApp" hidden></select>
+    </div>
+    <label class="check"><input type="checkbox" id="muteLocal" checked> <span id="muteLabel">Mute this PC while casting</span></label>
     <p class="note" id="audioNote" hidden>Sound is available on Windows only.</p>
     <p class="note" id="macNote" hidden>On macOS, allow Projector Cast in System Settings › Privacy &amp; Security › Screen Recording, then reopen it.</p>
 

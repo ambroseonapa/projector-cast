@@ -13,6 +13,7 @@ java -cp jvm/out RunServer >/dev/null & S1=$!; sleep 1
 echo "== PC network code =="; node node/main-network.test.js || { kill $S1; exit 1; }
 node node/vdd.test.js
 node node/remote-keys.test.js
+node node/app-audio.test.js
 kill $S1
 echo "== Projector picture shader =="; node webrtc/picture-shader.test.js
 echo "== WebRTC streaming =="; node webrtc/e2e.test.js | grep -v "sender over\|sender codecs"

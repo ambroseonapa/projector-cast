@@ -178,6 +178,8 @@
       });
       const v = this.stream.getVideoTracks()[0];
       if (!v) throw new Error('Nothing was captured.');
+      // Sound captured separately (one app's sound) replaces the system sound.
+      if (this.opts.extraAudio) this.stream.addTrack(this.opts.extraAudio);
       if (this.events.onStream) this.events.onStream(this.stream);
       this.setContentHint(v);
       this.watchEnd(v);

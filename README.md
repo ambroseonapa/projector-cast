@@ -47,6 +47,10 @@ On touch devices: tap to show or hide status, swipe left or right to change disp
 
 The menu adjusts **Brightness**, **Contrast** and **Colour** (−50 to +50) and **Sharpness** (0 to 100). Settings are kept on the projector and apply to every cast. Sharpness works in display mode 1 only. **Reset picture** restores the defaults. On a still picture, a change shows once the next frame arrives.
 
+### Sound from one app (Windows 10 build 20348 / Windows 11)
+
+**Sound from → One app** sends only the chosen app's sound (for example Edge, Chrome, VLC or a virtual machine) to the projector; the rest of the PC keeps its sound. With **Mute this app on the PC while casting**, that app is silent on the PC and plays on the projector only — so children can watch on the projector while you are in a meeting on the PC. Muting is undone when casting stops. A browser plays all its tabs together, so to separate two things in browsers, use two browsers (e.g. Chrome on the projector, Edge for yourself).
+
 ### Lip sync
 
 Bluetooth speakers and headphones play sound late, from about 150 ms to over 500 ms on some speakers. The projector shows the picture later by the same amount. With Bluetooth this is automatic: when a speaker connects, the projector measures its delay (it plays a second of silence) and uses that. **Menu → Sound → Lip sync** shows the value (*Auto*); ◀ ▶ sets it by hand in 20 ms steps up to 1500 ms (lower it if the mouth moves after the voice, raise it if the voice comes before the mouth), and OK returns to *Auto*. The built-in speaker has its own value, 0 by default.

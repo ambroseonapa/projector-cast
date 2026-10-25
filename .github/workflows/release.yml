@@ -39,6 +39,12 @@ jobs:
         with: { name: apk, path: dist }
       - uses: actions/setup-node@v4
         with: { node-version: 22, cache: npm, cache-dependency-path: sender-pc/package-lock.json }
+      - name: Check the Windows sound helper compiles (Windows PowerShell 5.1)
+        shell: powershell
+        run: |
+          $env:PCAST_COMPILE_ONLY = '1'
+          powershell -NoProfile -ExecutionPolicy Bypass -File sender-pc/app-audio.ps1
+          if ($LASTEXITCODE -ne 0) { exit 1 }
       - name: Build Windows installer
         working-directory: sender-pc
         run: |

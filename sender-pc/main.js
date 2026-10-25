@@ -110,6 +110,7 @@ const disabledFeatures = ['WebRtcHideLocalIpsWithMdns'];
 if (settings.captureMethod === 'compat') disabledFeatures.push('AllowWgcScreenCapturer', 'AllowWgcDesktopCapturer');
 app.commandLine.appendSwitch('disable-features', disabledFeatures.join(','));
 app.commandLine.appendSwitch('disable-renderer-backgrounding');
+app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required'); // app sound plays through an AudioContext
 app.commandLine.appendSwitch('disable-background-timer-throttling');
 
 app.whenReady().then(() => {
@@ -381,6 +382,84 @@ ipcMain.handle('remote-key', (_e, key) => {
 });
 
 app.on('will-quit', () => { if (keyHelper) keyHelper.kill(); });
+
+// ---- Sound of one app (Windows 10 build 20348 / Windows 11 and later) ----
+
+let appAudio = null;
+
+function appAudioSupported() {
+  return process.platform === 'win32' && parseInt(os.release().split('.')[2], 10) >= 20348;
+}
+
+ipcMain.handle('app-audio-supported', () => appAudioSupported());
+
+/** Running apps that have a window, one entry per app name. */
+ipcMain.handle('list-audio-apps', async () => {
+  if (!appAudioSupported()) return [];
+  const out = await powershell('Get-Process | Where-Object { $_.MainWindowHandle -ne 0 } | '
+    + 'Select-Object Id, ProcessName, Description | ConvertTo-Json -Compress');
+  let list = [];
+  try { list = [].concat(JSON.parse(out || '[]')); } catch (_) { return []; }
+  const seen = new Set();
+  return list
+    .map((p) => ({ pid: p.Id, name: (p.Description || p.ProcessName || '').trim() }))
+    .filter((p) => p.name && !/^(ProjectorCast|Projector Cast|electron)$/i.test(p.name) && p.pid !== process.pid)
+    .filter((p) => !seen.has(p.name.toLowerCase()) && seen.add(p.name.toLowerCase()))
+    .sort((a, b) => a.name.localeCompare(b.name));
+});
+
+// Full-line comments and indentation are dropped to stay within the command-line length limit.
+function appAudioScript(pid, mute) {
+  const src = fs.readFileSync(path.join(__dirname, 'app-audio.ps1'), 'utf8')
+    .split(/\r?\n/).map((l) => l.trim()).filter((l) => l && !/^(#|\/\/)/.test(l)).join('\r\n');
+  return `$TargetPid = ${Number(pid)}; $Mute = $${mute ? 'true' : 'false'}\r\n${src}`;
+}
+
+function stopAppAudio() {
+  const a = appAudio;
+  appAudio = null;
+  if (!a) return;
+  a.stopping = true;
+  try { a.proc.stdin.end('stop\r\n'); } catch (_) { /* already gone */ }
+  // Normally exits at once after unmuting the app.
+  setTimeout(() => { if (a.proc.exitCode === null) a.proc.kill(); }, 4000);
+}
+
+/** Starts capturing; the PCM goes to the window as 'app-audio' messages. */
+ipcMain.handle('app-audio-start', (_e, { pid, mute }) => new Promise((resolve, reject) => {
+  stopAppAudio();
+  const encoded = Buffer.from(appAudioScript(pid, mute), 'utf16le').toString('base64');
+  const proc = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Mta', '-EncodedCommand', encoded],
+    { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
+  const a = { proc, stopping: false };
+  appAudio = a;
+  let errors = '';
+  let rest = Buffer.alloc(0);
+  let started = false;
+  const begin = () => { if (!started) { started = true; resolve(true); } };
+  proc.stdout.on('data', (chunk) => {
+    // Whole frames only (2 channels x 16 bit).
+    const data = rest.length ? Buffer.concat([rest, chunk]) : chunk;
+    const whole = data.length - (data.length % 4);
+    rest = data.subarray(whole);
+    if (whole && win && !win.isDestroyed()) win.webContents.send('app-audio', data.subarray(0, whole));
+    begin();
+  });
+  proc.stderr.on('data', (c) => { errors += c; });
+  proc.stdin.on('error', () => { /* helper exited */ });
+  proc.on('error', (e) => { if (!started) reject(e); });
+  proc.on('exit', () => {
+    if (appAudio === a) appAudio = null;
+    const why = errors.trim().split(/\r?\n/).pop() || 'sound capture stopped';
+    if (!started) reject(new Error(why));
+    else if (!a.stopping && win && !win.isDestroyed()) win.webContents.send('app-audio-ended', why);
+  });
+  // A quiet app sends nothing yet: running for a moment without an error counts as started.
+  setTimeout(begin, 2500);
+}));
+
+ipcMain.handle('app-audio-stop', () => stopAppAudio());
+app.on('will-quit', stopAppAudio);
 
 ipcMain.handle('get-settings', () => ({ captureMethod: settings.captureMethod || 'auto' }));
 

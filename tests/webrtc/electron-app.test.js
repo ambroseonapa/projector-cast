@@ -104,6 +104,34 @@ const RECEIVER = 'file://' + path.resolve(__dirname, '../../receiver-android/ass
   assert(!listed, 'preview window is not offered as a source');
   await popup.close();
   console.log('PASS preview window shows the cast picture on the PC, on top');
+  // The player for one app's sound: 16-bit PCM in, a live audio track out (the Windows helper is not run here).
+  const level = await win.evaluate(async () => {
+    const ctx = new AudioContext({ sampleRate: 48000 });
+    await ctx.audioWorklet.addModule('app-audio-worklet.js');
+    await ctx.resume();
+    const node = new AudioWorkletNode(ctx, 'pcm-player', { numberOfInputs: 0, outputChannelCount: [2] });
+    const dest = ctx.createMediaStreamDestination();
+    node.connect(dest);
+    const analyser = ctx.createAnalyser();
+    ctx.createMediaStreamSource(dest.stream).connect(analyser);
+    const pcm = new Int16Array(4800 * 2); // 100 ms of a 440 Hz tone, sent in 10 ms pieces like the helper
+    for (let i = 0; i < 4800; i++) pcm[2 * i] = pcm[2 * i + 1] = Math.round(12000 * Math.sin(2 * Math.PI * 440 * i / 48000));
+    const bytes = new Uint8Array(pcm.buffer);
+    let peak = 0;
+    for (let round = 0; round < 30; round++) {
+      for (let k = 0; k < 10; k++) node.port.postMessage(bytes.slice(k * 1920, (k + 1) * 1920));
+      await new Promise((r) => setTimeout(r, 100));
+      const d = new Float32Array(analyser.fftSize);
+      analyser.getFloatTimeDomainData(d);
+      peak = Math.max(peak, ...d.map(Math.abs));
+    }
+    const track = dest.stream.getAudioTracks()[0];
+    const live = track.readyState;
+    ctx.close();
+    return { peak, live };
+  });
+  assert(level.live === 'live' && level.peak > 0.2 && level.peak < 0.5, 'app-sound player plays the PCM: ' + JSON.stringify(level));
+  console.log('PASS one-app sound: PCM from the helper becomes a live audio track (peak ' + level.peak.toFixed(2) + ')');
   await win.waitForFunction(() => /Web standard/.test(document.getElementById('projStats').textContent), null, { timeout: 10000 });
   await win.waitForTimeout(4500);
   await win.click('#liveAdvanced summary');

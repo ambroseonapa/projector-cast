@@ -1,7 +1,7 @@
 {
   "name": "projector-cast",
   "productName": "Projector Cast",
-  "version": "1.14.0",
+  "version": "1.15.0",
   "description": "Screen and audio mirroring from Windows to Android TV projectors.",
   "main": "main.js",
   "private": true,
@@ -20,7 +20,9 @@
       "cast-core.js",
       "renderer.js",
       "index.html",
-      "style.css"
+      "style.css",
+      "app-audio.ps1",
+      "app-audio-worklet.js"
     ],
     "directories": {
       "output": "../dist/pc"
