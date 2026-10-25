@@ -96,6 +96,14 @@ const RECEIVER = 'file://' + path.resolve(__dirname, '../../receiver-android/ass
   const preview = await win.evaluate(() => { const v = document.getElementById('preview'); return { w: v.videoWidth, t: v.currentTime }; });
   assert(preview.w > 0 && preview.t > 1, 'PC preview plays: ' + JSON.stringify(preview));
   console.log('PASS PC preview shows what is sent');
+  const [popup] = await Promise.all([app.waitForEvent('window'), win.click('#popPreview')]);
+  await popup.waitForFunction(() => { const v = document.querySelector('video'); return v && v.videoWidth > 0 && v.currentTime > 0.5; }, null, { timeout: 10000 });
+  const onTop = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().some((w) => w.getTitle() === 'Projector Cast preview' && w.isAlwaysOnTop()));
+  assert(onTop, 'preview window stays on top');
+  const listed = await win.evaluate(async () => (await window.cast.listScreens()).some((x) => x.name === 'Projector Cast preview'));
+  assert(!listed, 'preview window is not offered as a source');
+  await popup.close();
+  console.log('PASS preview window shows the cast picture on the PC, on top');
   await win.waitForFunction(() => /Web standard/.test(document.getElementById('projStats').textContent), null, { timeout: 10000 });
   await win.waitForTimeout(4500);
   await win.click('#liveAdvanced summary');
@@ -211,8 +219,16 @@ const RECEIVER = 'file://' + path.resolve(__dirname, '../../receiver-android/ass
   // The window list catches up with the window manager after a moment.
   await win.waitForFunction(async () => !(await window.cast.listScreens()).some((x) => x.name === 'Match Window'), null, { timeout: 10000, polling: 300 });
   await win.evaluate(() => window.cast.prepareCapture({ screenId: selectedId, screenName: 'Match Window', audio: false }));
-  const refused = await win.evaluate(() => navigator.mediaDevices.getDisplayMedia({ video: true }).then((s) => { s.getTracks().forEach((t) => t.stop()); return false; }, () => true));
-  assert(refused, 'closed window is not silently replaced by the whole screen');
+  const refused = await win.evaluate(() => navigator.mediaDevices.getDisplayMedia({ video: true }).then((s) => {
+    const what = s.getVideoTracks()[0].label + ' ' + JSON.stringify(s.getVideoTracks()[0].getSettings());
+    s.getTracks().forEach((t) => t.stop());
+    return what;
+  }, () => true));
+  if (refused !== true) {
+    const ids = await app.evaluate(async ({ desktopCapturer }) => (await desktopCapturer.getSources({ types: ['screen', 'window'] })).map((x) => x.id + ' ' + x.name));
+    console.log('  got', refused, 'sources now:', ids, 'chosen:', await win.evaluate(() => selectedId));
+  }
+  assert(refused === true, 'closed window is not silently replaced by the whole screen');
   console.log('PASS a closed window is refused instead of casting the whole screen');
   await receiver.screenshot({ path: path.join(__dirname, 'out-projector-window.png') });
   const userData = await app.evaluate(({ app: a }) => a.getPath('userData'));

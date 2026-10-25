@@ -533,10 +533,12 @@ public class MainActivity extends Activity implements CastServer.Handler {
     private String nativeOffer(String offerJson, final String senderName, String senderIp) throws Exception {
         JSONObject offer = new JSONObject(offerJson);
         if (!"offer".equals(offer.optString("type")) || !offer.has("sdp")) throw new Exception("bad offer");
+        lowLatency = offer.optInt("buffer", 150) == 0;
         final CountDownLatch shown = new CountDownLatch(1);
         ui.post(new Runnable() {
             public void run() {
                 sender = senderName;
+                applySync();
                 js("if (pc) stopCast(''); setStatus(" + CastServer.quote("Connecting to " + senderName + "...") + ")");
                 web.setVisibility(View.VISIBLE);
                 surface.setVisibility(View.VISIBLE);
@@ -708,9 +710,12 @@ public class MainActivity extends Activity implements CastServer.Handler {
         return Math.max(0, Math.min(SYNC_MAX, bt - prefs().getInt("measuredSpeaker", 100)));
     }
 
+    /** Set from the PC's offer: "Low latency" is for controlling the PC, so no lip-sync delay. */
+    private volatile boolean lowLatency;
+
     private void applySync() {
         bluetoothOut = bluetoothConnected();
-        if (player != null) player.setVideoDelay(syncMs());
+        if (player != null) player.setVideoDelay(lowLatency ? 0 : syncMs());
         js("setVideoDelay(" + syncMs() + ")");
     }
 

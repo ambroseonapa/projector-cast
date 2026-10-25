@@ -64,9 +64,12 @@ var videoDelay = 0, soundSeparate = false, bufferMs = 150;
 function setVideoDelay(ms) {
   videoDelay = ms > 0 ? Math.min(ms, 2000) : 0;
   if (!pc) return;
-  if ((videoDelay > 0) !== soundSeparate) { stopCast('Adjusting lip sync\u2026'); return; }
+  if ((pictureDelay() > 0) !== soundSeparate) { stopCast('Adjusting lip sync\u2026'); return; }
   applyBuffers(pc);
 }
+
+// "Low latency" on the PC (buffer 0) is for controlling the PC: no lip-sync delay then.
+function pictureDelay() { return bufferMs === 0 ? 0 : videoDelay; }
 
 function setTarget(r, ms) {
   try { if ('jitterBufferTarget' in r) r.jitterBufferTarget = ms; else r.playoutDelayHint = ms / 1000; } catch (e) {}
@@ -74,7 +77,7 @@ function setTarget(r, ms) {
 
 function applyBuffers(conn) {
   conn.getReceivers().forEach(function (r) {
-    if (r.track) setTarget(r, bufferMs + (r.track.kind === 'video' ? videoDelay : 0));
+    if (r.track) setTarget(r, bufferMs + (r.track.kind === 'video' ? pictureDelay() : 0));
   });
 }
 
@@ -269,7 +272,7 @@ function handleOffer(id, offerText, sender, senderIp) {
 
   // Receive buffer chosen on the PC: 0 = lowest delay, more = smoother on weak Wi-Fi.
   bufferMs = typeof offer.buffer === 'number' && offer.buffer >= 0 && offer.buffer <= 1000 ? offer.buffer : 150;
-  soundSeparate = videoDelay > 0;
+  soundSeparate = pictureDelay() > 0;
   var sdp = unhideAddresses(offer.sdp, senderIp);
   offer = { type: 'offer', sdp: soundSeparate ? separateSound(sdp) : sdp };
   closePc();
@@ -281,7 +284,7 @@ function handleOffer(id, offerText, sender, senderIp) {
 
   conn.ontrack = function (ev) {
     // Small extra buffer: rides out Wi-Fi hiccups instead of cutting the sound or freezing.
-    if (ev.receiver) setTarget(ev.receiver, bufferMs + (ev.track.kind === 'video' ? videoDelay : 0));
+    if (ev.receiver) setTarget(ev.receiver, bufferMs + (ev.track.kind === 'video' ? pictureDelay() : 0));
     // One stream for the <video>, also when the sound arrives in a stream of its own.
     stream = stream || new MediaStream();
     if (stream.getTracks().indexOf(ev.track) < 0) stream.addTrack(ev.track);

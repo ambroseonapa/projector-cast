@@ -79,7 +79,17 @@ function createWindow() {
     },
   });
   win.loadFile(path.join(__dirname, 'index.html'));
-  win.webContents.setWindowOpenHandler(({ url }) => {
+  win.webContents.setWindowOpenHandler(({ url, frameName }) => {
+    // The preview window: a blank page the app fills with the cast picture.
+    if (frameName === 'preview' && url === 'about:blank') {
+      return {
+        action: 'allow',
+        overrideBrowserWindowOptions: {
+          title: 'Projector Cast preview', alwaysOnTop: true, autoHideMenuBar: true, backgroundColor: '#000000',
+          minWidth: 240, minHeight: 135, webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false },
+        },
+      };
+    }
     if (url.startsWith('https://')) shell.openExternal(url);
     return { action: 'deny' };
   });
@@ -152,7 +162,7 @@ ipcMain.handle('list-screens', async () => {
   const screens = sources.filter((s) => s.id.startsWith('screen:'));
   const labels = new Map(screen.getAllDisplays().map((d) => [String(d.id), d.label]));
   return sources
-    .filter((s) => !(s.id.startsWith('window:') && (s.name === ownTitle || !s.name)))
+    .filter((s) => !(s.id.startsWith('window:') && (s.name === ownTitle || s.name === 'Projector Cast preview' || !s.name)))
     .map((s) => {
       const isScreen = s.id.startsWith('screen:');
       const info = isScreen

@@ -295,6 +295,14 @@ async function run(browser, opts, label, gpu) {
     const live = await receiver.evaluate(() => window.__pc === pc && pc.getReceivers().find((r) => r.track.kind === 'video').jitterBufferTarget);
     assert.strictEqual(live, 550, 'changing the delay applies without reconnecting');
     console.log('PASS lip sync delays the picture and not the sound');
+    // "Low latency" on the PC is for controlling it: no lip-sync delay then.
+    const lives = await sender.evaluate(() => window.log.filter((l) => l.startsWith('live:')).length);
+    await sender.evaluate(() => window.session.update({ buffer: 0 }));
+    await sender.waitForFunction((n) => window.log.filter((l) => l.startsWith('live:')).length > n, lives, { timeout: 15000 });
+    await receiver.waitForTimeout(1500);
+    const low = await receiver.evaluate(() => ({ separate: soundSeparate, targets: pc.getReceivers().map((r) => r.track.kind + ':' + r.jitterBufferTarget).sort() }));
+    assert.deepStrictEqual(low, { separate: false, targets: ['audio:0', 'video:0'] }, 'low latency skips the lip-sync delay: ' + JSON.stringify(low));
+    console.log('PASS low latency turns the lip-sync delay off');
     await ctx.close();
   }
   console.log('PASS 720p30 (new default)');

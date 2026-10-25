@@ -322,6 +322,31 @@ async function vddAction(button, work, busyText) {
   }
 }
 
+// ---- Preview window: what is cast, without the projector's delay (useful for a second screen) ----
+
+let previewWin = null;
+
+function openPreviewWindow() {
+  if (previewWin && !previewWin.closed) return previewWin.focus();
+  previewWin = window.open('', 'preview', 'width=640,height=380');
+  if (!previewWin) return;
+  const doc = previewWin.document;
+  doc.title = 'Projector Cast preview';
+  Object.assign(doc.body.style, { margin: '0', background: '#000', overflow: 'hidden' });
+  const v = doc.createElement('video');
+  v.muted = true;
+  v.autoplay = true;
+  Object.assign(v.style, { width: '100vw', height: '100vh', objectFit: 'contain', display: 'block' });
+  doc.body.append(v);
+  showInPreviewWindow();
+}
+
+function showInPreviewWindow() {
+  if (!previewWin || previewWin.closed) return;
+  const v = previewWin.document.querySelector('video');
+  if (v) v.srcObject = $('preview').srcObject;
+}
+
 // ---- Casting ----
 
 async function init() {
@@ -372,6 +397,7 @@ async function init() {
   $('code').addEventListener('keydown', (e) => { if (e.key === 'Enter') start(); });
   $('start').addEventListener('click', start);
   $('stop').addEventListener('click', () => session && session.stop('Stopped'));
+  $('popPreview').addEventListener('click', openPreviewWindow);
   window.addEventListener('focus', () => { if (!session) loadScreens(); });
   await loadScreens();
 }
@@ -452,7 +478,10 @@ async function start() {
         $('dot').className = 'dot' + (kind === 'live' ? ' live' : '');
       },
       onStats: (text) => { $('stats').textContent = text; },
-      onStream: (stream) => { $('preview').srcObject = new MediaStream(stream.getVideoTracks()); },
+      onStream: (stream) => {
+        $('preview').srcObject = new MediaStream(stream.getVideoTracks());
+        showInPreviewWindow();
+      },
       onQuality: (key) => {
         $('liveQuality').value = key;
         $('quality').value = key;
@@ -466,6 +495,7 @@ async function start() {
         remoteKeyTimer = setTimeout(() => { $('remoteKey').textContent = ''; }, 3000);
       },
       onEnded: (reason) => {
+        if (previewWin && !previewWin.closed) previewWin.close();
         session = null;
         stopReport();
         $('copyLast').hidden = timeline.length === 0;
