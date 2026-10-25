@@ -56,6 +56,35 @@ var canvas = document.getElementById('canvas');
 var ctx2d = canvas.getContext('2d');
 var displayMode = 1, painting = false;
 var control = null;
+var videoDelay = 0, soundSeparate = false, bufferMs = 150;
+
+// Lip sync: shows the picture this many ms later, for sound that plays late (Bluetooth speakers).
+// WebRTC keeps sound and picture of one stream in step, so with a delay the sound is put in a stream
+// of its own; switching between 0 and a delay therefore needs a new connection (the PC reconnects).
+function setVideoDelay(ms) {
+  videoDelay = ms > 0 ? Math.min(ms, 2000) : 0;
+  if (!pc) return;
+  if ((videoDelay > 0) !== soundSeparate) { stopCast('Adjusting lip sync\u2026'); return; }
+  applyBuffers(pc);
+}
+
+function setTarget(r, ms) {
+  try { if ('jitterBufferTarget' in r) r.jitterBufferTarget = ms; else r.playoutDelayHint = ms / 1000; } catch (e) {}
+}
+
+function applyBuffers(conn) {
+  conn.getReceivers().forEach(function (r) {
+    if (r.track) setTarget(r, bufferMs + (r.track.kind === 'video' ? videoDelay : 0));
+  });
+}
+
+// Moves the sound to a stream of its own, so the picture can be delayed separately.
+function separateSound(sdp) {
+  return sdp.split(/(?=\r\nm=)/).map(function (section) {
+    if (!/^(\r\n)?m=audio/.test(section)) return section;
+    return section.replace(/^(a=msid:|a=ssrc:\d+ msid:)(\S+)( )/gm, '$1$2-sound$3');
+  }).join('');
+}
 
 // Picture settings from the projector menu, each -50..50. Sharpness is native-player only.
 function setPicture(brightness, contrast, colour) {
@@ -239,8 +268,10 @@ function handleOffer(id, offerText, sender, senderIp) {
   if (!offer || offer.type !== 'offer' || typeof offer.sdp !== 'string') { Cast.answer(id, '', 'bad offer'); return; }
 
   // Receive buffer chosen on the PC: 0 = lowest delay, more = smoother on weak Wi-Fi.
-  var bufferMs = typeof offer.buffer === 'number' && offer.buffer >= 0 && offer.buffer <= 1000 ? offer.buffer : 150;
-  offer = { type: 'offer', sdp: unhideAddresses(offer.sdp, senderIp) };
+  bufferMs = typeof offer.buffer === 'number' && offer.buffer >= 0 && offer.buffer <= 1000 ? offer.buffer : 150;
+  soundSeparate = videoDelay > 0;
+  var sdp = unhideAddresses(offer.sdp, senderIp);
+  offer = { type: 'offer', sdp: soundSeparate ? separateSound(sdp) : sdp };
   closePc();
   prev = {}; lastSize = '';
   setStatus('Connecting to ' + sender + '\u2026');
@@ -250,11 +281,9 @@ function handleOffer(id, offerText, sender, senderIp) {
 
   conn.ontrack = function (ev) {
     // Small extra buffer: rides out Wi-Fi hiccups instead of cutting the sound or freezing.
-    var r = ev.receiver;
-    if (r) {
-      try { if ('jitterBufferTarget' in r) r.jitterBufferTarget = bufferMs; else r.playoutDelayHint = bufferMs / 1000; } catch (e) {}
-    }
-    stream = (ev.streams && ev.streams[0]) || stream || new MediaStream();
+    if (ev.receiver) setTarget(ev.receiver, bufferMs + (ev.track.kind === 'video' ? videoDelay : 0));
+    // One stream for the <video>, also when the sound arrives in a stream of its own.
+    stream = stream || new MediaStream();
     if (stream.getTracks().indexOf(ev.track) < 0) stream.addTrack(ev.track);
     attachStream(stream);
   };

@@ -250,6 +250,38 @@ async function run(browser, opts, label, gpu) {
     });
     assert(/brightness\(1\.08\) contrast\(0\.8\) saturate\(1\.5\)/.test(filters[0]) && filters[1] === 'none', 'picture filter: ' + filters);
     console.log('PASS picture settings apply to the web player');
+    // Lip sync: the picture is held back, the sound is not (it is in a stream of its own).
+    const delays = async () => {
+      const read = () => receiver.evaluate(async () => {
+        const out = {};
+        (await pc.getStats()).forEach((r) => { if (r.type === 'inbound-rtp') out[r.kind] = [r.jitterBufferDelay, r.jitterBufferEmittedCount]; });
+        return out;
+      });
+      const a = await read();
+      await receiver.waitForTimeout(3000);
+      const b = await read();
+      const ms = (k) => Math.round(1000 * (b[k][0] - a[k][0]) / (b[k][1] - a[k][1]));
+      return { video: ms('video'), audio: ms('audio') };
+    };
+    const syncBefore = await delays();
+    await receiver.evaluate(() => setVideoDelay(300));
+    await sender.waitForFunction(() => window.log.filter((l) => l.startsWith('live:')).length >= 2, null, { timeout: 15000 });
+    await receiver.waitForTimeout(4000);
+    const split = await receiver.evaluate(() => ({
+      separate: soundSeparate,
+      targets: pc.getReceivers().map((r) => r.track.kind + ':' + r.jitterBufferTarget).sort(),
+      tracks: document.getElementById('video').srcObject.getTracks().map((t) => t.kind).sort(),
+      playing: !document.getElementById('video').paused,
+    }));
+    const syncAfter = await delays();
+    console.log('  lip sync: buffer delay before', JSON.stringify(syncBefore), 'with +300 ms', JSON.stringify(syncAfter));
+    assert(split.separate && split.playing && split.tracks.join() === 'audio,video', 'sound in its own stream, both still play: ' + JSON.stringify(split));
+    assert.deepStrictEqual(split.targets, ['audio:150', 'video:450'], 'picture buffer raised by the delay');
+    assert(syncAfter.video - syncBefore.video > 200 && Math.abs(syncAfter.audio - syncBefore.audio) < 100, 'picture held back, sound not: ' + JSON.stringify([syncBefore, syncAfter]));
+    await receiver.evaluate(() => { window.__pc = pc; setVideoDelay(400); });
+    const live = await receiver.evaluate(() => window.__pc === pc && pc.getReceivers().find((r) => r.track.kind === 'video').jitterBufferTarget);
+    assert.strictEqual(live, 550, 'changing the delay applies without reconnecting');
+    console.log('PASS lip sync delays the picture and not the sound');
     await ctx.close();
   }
   console.log('PASS 720p30 (new default)');

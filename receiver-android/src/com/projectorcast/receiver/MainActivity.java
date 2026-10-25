@@ -100,6 +100,7 @@ public class MainActivity extends Activity implements CastServer.Handler {
                 root.addView(surface, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
                 player = new NativePlayer(this, surface, nativeEvents, prefs().getInt("decoder", 0));
                 applyPicture();
+                applySync();
                 surface.setVisibility(View.GONE);
             } catch (Throwable t) {
                 if (surface != null) root.removeView(surface);
@@ -125,6 +126,7 @@ public class MainActivity extends Activity implements CastServer.Handler {
                 pageReady = true;
                 pushInfo();
                 applyPicture();
+                applySync();
             }
         });
         web.setFocusable(false);
@@ -159,6 +161,7 @@ public class MainActivity extends Activity implements CastServer.Handler {
         }
 
         ui.postDelayed(ipWatcher, 3000);
+        watchAudioOutputs();
         registerReceiver(installResult, new IntentFilter(INSTALL_ACTION));
     }
 
@@ -216,6 +219,7 @@ public class MainActivity extends Activity implements CastServer.Handler {
             o.put("casting", nativeCasting() ? "native" : "web or idle");
             o.put("picture", "brightness " + setting(0) + ", contrast " + setting(1) + ", colour " + setting(2) + ", sharpness " + setting(3)
                     + (player != null && player.picture.failed() ? " (not supported by this GPU)" : ""));
+            o.put("lipSync", syncMs() + " ms, sound on " + (bluetoothOut ? "Bluetooth" : "speaker"));
             o.put("stats", text[0]);
             JSONArray ev = new JSONArray();
             synchronized (events) {
@@ -637,19 +641,21 @@ public class MainActivity extends Activity implements CastServer.Handler {
 
     private static final String[] SETTINGS = {"Brightness", "Contrast", "Colour", "Sharpness"};
     private static final String[] SETTING_KEYS = {"pictureBrightness", "pictureContrast", "pictureColour", "pictureSharpness"};
-    /** Menu rows after the settings: label and the key sent to the PC (null = reset picture). */
-    private static final String[][] ACTIONS = {
+    /** Menu rows: the four settings, then these. Second value: key sent to the PC. */
+    private static final String[][] ROWS = {
             {"Reset picture", null},
-            {"PC: play / pause", "playpause"},
-            {"PC: back", "back"},
-            {"PC: forward", "forward"},
-            {"PC: previous", "previous"},
-            {"PC: next", "next"},
+            {"Lip sync", null},
+            {"Play / pause", "playpause"},
+            {"Back", "back"},
+            {"Forward", "forward"},
+            {"Previous", "previous"},
+            {"Next", "next"},
     };
+    private static final int RESET_ROW = 4, SYNC_ROW = 5, FIRST_PC_ROW = 6;
     private static final Map<String, String> KEY_NAMES = new HashMap<String, String>();
 
     static {
-        for (String[] a : ACTIONS) if (a[1] != null) KEY_NAMES.put(a[1], a[0].substring(4));
+        for (String[] r : ROWS) if (r[1] != null) KEY_NAMES.put(r[1], r[0]);
     }
 
     private boolean menuOpen;
@@ -662,6 +668,56 @@ public class MainActivity extends Activity implements CastServer.Handler {
     private void applyPicture() {
         if (player != null) player.picture.set(setting(0), setting(1), setting(2), setting(3));
         js("setPicture(" + setting(0) + "," + setting(1) + "," + setting(2) + ")");
+    }
+
+    // ---- Lip sync: Bluetooth speakers play sound 150-300 ms late, so the picture is delayed to match ----
+
+    private boolean bluetoothOut;
+
+    /** Delay in ms, kept separately for Bluetooth and for the projector's own speaker. */
+    private int syncMs() {
+        return bluetoothOut ? prefs().getInt("syncBluetooth", 200) : prefs().getInt("syncSpeaker", 0);
+    }
+
+    private void applySync() {
+        bluetoothOut = bluetoothConnected();
+        if (player != null) player.setVideoDelay(syncMs());
+        js("setVideoDelay(" + syncMs() + ")");
+    }
+
+    private boolean bluetoothConnected() {
+        if (Build.VERSION.SDK_INT < 23) return false;
+        AudioManager am = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
+        if (am == null) return false;
+        for (android.media.AudioDeviceInfo d : am.getDevices(AudioManager.GET_DEVICES_OUTPUTS)) {
+            int t = d.getType();
+            // A2DP, BLE headset, BLE speaker
+            if (t == android.media.AudioDeviceInfo.TYPE_BLUETOOTH_A2DP || t == 26 || t == 27) return true;
+        }
+        return false;
+    }
+
+    /** Re-applies lip sync when a Bluetooth speaker connects or disconnects. */
+    private void watchAudioOutputs() {
+        if (Build.VERSION.SDK_INT < 23) return;
+        AudioManager am = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
+        if (am == null) return;
+        am.registerAudioDeviceCallback(new android.media.AudioDeviceCallback() {
+            @Override
+            public void onAudioDevicesAdded(android.media.AudioDeviceInfo[] added) { outputsChanged(); }
+
+            @Override
+            public void onAudioDevicesRemoved(android.media.AudioDeviceInfo[] removed) { outputsChanged(); }
+        }, ui);
+    }
+
+    private void outputsChanged() {
+        boolean was = bluetoothOut;
+        applySync();
+        if (was != bluetoothOut) {
+            log("sound output: " + (bluetoothOut ? "Bluetooth" : "speaker") + ", lip sync " + syncMs() + " ms");
+            if (menuOpen) setMenu(true);
+        }
     }
 
     private final Runnable closeMenu = new Runnable() {
@@ -677,32 +733,44 @@ public class MainActivity extends Activity implements CastServer.Handler {
         }
         ui.postDelayed(closeMenu, 15000);
         StringBuilder b = new StringBuilder("Picture\n");
-        for (int i = 0; i < SETTINGS.length + ACTIONS.length; i++) {
-            if (i == SETTINGS.length + 1) b.append("\nPC\n");
-            b.append(i == menuRow ? "▸ " : "  ");
-            if (i < SETTINGS.length) {
-                int v = setting(i);
-                String value = (v > 0 && i < 3 ? "+" : "") + v;
-                b.append(String.format(java.util.Locale.US, "%-11s", SETTINGS[i]))
-                        .append(i == menuRow ? "◀ " + value + " ▶" : "  " + value);
+        for (int i = 0; i < SETTINGS.length + ROWS.length; i++) {
+            if (i == SYNC_ROW) b.append("\nSound\n");
+            if (i == FIRST_PC_ROW) b.append("\nPC\n");
+            boolean sel = i == menuRow;
+            b.append(sel ? "\u25b8 " : "  ");
+            if (i < SETTINGS.length || i == SYNC_ROW) {
+                String name = i == SYNC_ROW ? "Lip sync" : SETTINGS[i];
+                int v = i == SYNC_ROW ? syncMs() : setting(i);
+                String value = i == SYNC_ROW ? (v > 0 ? "+" : "") + v + " ms" : (v > 0 && i < 3 ? "+" : "") + v;
+                b.append(String.format(java.util.Locale.US, "%-11s", name))
+                        .append(sel ? "\u25c0 " + value + " \u25b6" : "  " + value);
                 if (i == 3 && mode != 1) b.append("  (display mode 1 only)");
+                if (i == SYNC_ROW) b.append(bluetoothOut ? "  (Bluetooth)" : "  (speaker)");
             } else {
-                b.append(ACTIONS[i - SETTINGS.length][0].replace("PC: ", ""));
+                b.append(ROWS[i - SETTINGS.length][0]);
             }
             b.append('\n');
         }
-        b.append("\n▲▼ choose  ◀▶ change  OK select  Back close");
+        if (menuRow == SYNC_ROW) b.append("\nMouth moves after the voice: lower. Voice after the mouth: raise.\n");
+        b.append("\n\u25b2\u25bc choose  \u25c0\u25b6 change  OK select  Back close");
         menuView.setText(b.toString());
         menuView.setVisibility(View.VISIBLE);
     }
 
     private void menuMove(int step) {
-        int rows = SETTINGS.length + ACTIONS.length;
+        int rows = SETTINGS.length + ROWS.length;
         menuRow = ((menuRow + step) % rows + rows) % rows;
         setMenu(true);
     }
 
     private void menuChange(int step) {
+        if (menuRow == SYNC_ROW) {
+            int v = Math.max(0, Math.min(800, syncMs() + step * 20));
+            prefs().edit().putInt(bluetoothOut ? "syncBluetooth" : "syncSpeaker", v).apply();
+            applySync();
+            setMenu(true);
+            return;
+        }
         if (menuRow >= SETTINGS.length) return;
         int min = menuRow == 3 ? 0 : -50, max = menuRow == 3 ? 100 : 50;
         int v = Math.max(min, Math.min(max, setting(menuRow) + step * (menuRow == 3 ? 10 : 5)));
@@ -712,12 +780,9 @@ public class MainActivity extends Activity implements CastServer.Handler {
     }
 
     private void menuSelect() {
-        if (menuRow < SETTINGS.length) {
+        if (menuRow < SETTINGS.length || menuRow == SYNC_ROW) {
             setMenu(false);
-            return;
-        }
-        String key = ACTIONS[menuRow - SETTINGS.length][1];
-        if (key == null) {
+        } else if (menuRow == RESET_ROW) {
             SharedPreferences.Editor e = prefs().edit();
             for (String k : SETTING_KEYS) e.remove(k);
             e.apply();
@@ -725,7 +790,7 @@ public class MainActivity extends Activity implements CastServer.Handler {
             applyPicture();
             setMenu(true);
         } else {
-            sendToPc(key);
+            sendToPc(ROWS[menuRow - SETTINGS.length][1]);
             setMenu(true);
         }
     }

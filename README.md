@@ -47,6 +47,10 @@ On touch devices: tap to show or hide status, swipe left or right to change disp
 
 The menu adjusts **Brightness**, **Contrast** and **Colour** (−50 to +50) and **Sharpness** (0 to 100). Settings are kept on the projector and apply to every cast. Sharpness works in display mode 1 only. **Reset picture** restores the defaults. On a still picture, a change shows once the next frame arrives.
 
+### Lip sync
+
+Bluetooth speakers and headphones play sound 150–300 ms late. **Menu → Sound → Lip sync** shows the picture later by the same amount (0–800 ms, in 20 ms steps): lower it if the mouth moves after the voice, raise it if the voice comes after the mouth. The value is kept separately for Bluetooth (starts at 200 ms) and for the projector's own speaker (starts at 0), and switches automatically when a Bluetooth speaker connects or disconnects.
+
 ### Controlling the PC
 
 The PC section of the menu, or the media keys on the remote, control what is playing on the PC:

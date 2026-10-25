@@ -90,6 +90,9 @@ class NativePlayer {
     private VideoTrack videoTrack;
     private FrameGate gate;
     private Runnable dropTimer;
+    private volatile int videoDelayMs;
+    private final android.os.HandlerThread delayThread = new android.os.HandlerThread("video-delay");
+    private final Handler delayed;
 
     // Stats bookkeeping
     private int connectionDrops;
@@ -100,6 +103,8 @@ class NativePlayer {
         this.ctx = ctx;
         this.view = view;
         this.listener = listener;
+        delayThread.start();
+        delayed = new Handler(delayThread.getLooper());
         egl = EglBase.create();
         view.init(egl.getEglBaseContext(), null, EglBase.CONFIG_PLAIN, picture);
         view.setScalingType(RendererCommon.ScalingType.SCALE_ASPECT_FIT);
@@ -109,6 +114,9 @@ class NativePlayer {
     }
 
     int strategy() { return strategy; }
+
+    /** Shows the picture this much later, to match sound that plays late (Bluetooth speakers). */
+    void setVideoDelay(int ms) { videoDelayMs = Math.max(0, ms); }
 
     /** UI thread. Ends the session and rebuilds the factory; the PC reconnects automatically. */
     void setStrategy(int s) {
@@ -202,6 +210,7 @@ class NativePlayer {
         if (videoTrack != null && gate != null) {
             try { videoTrack.removeSink(gate); } catch (Throwable ignored) { }
         }
+        if (gate != null) gate.close();
         videoTrack = null;
         gate = null;
         control = null; // disposed with the connection
@@ -212,6 +221,7 @@ class NativePlayer {
     void release() {
         closeSession();
         view.release();
+        delayThread.quit();
         if (factory != null) factory.dispose();
         if (adm != null) adm.release();
         egl.release();
@@ -272,14 +282,65 @@ class NativePlayer {
     }
 
     /**
-     * Forwards frames to the renderer and reports the first frame of each session (the renderer's own
-     * first-frame event fires only once per renderer).
+     * Forwards frames to the renderer, after the lip-sync delay if one is set, and reports the first
+     * frame of each session (the renderer's own first-frame event fires only once per renderer).
      */
     private class FrameGate implements VideoSink {
         volatile boolean seen;
         volatile long count;
+        private final java.util.ArrayDeque<VideoFrame> held = new java.util.ArrayDeque<VideoFrame>();
+        private boolean closed;
+
+        private final Runnable showNext = new Runnable() {
+            public void run() {
+                VideoFrame f;
+                synchronized (held) {
+                    f = held.poll();
+                }
+                if (f == null) return;
+                show(f);
+                f.release();
+            }
+        };
 
         public void onFrame(VideoFrame frame) {
+            int delay = videoDelayMs;
+            synchronized (held) {
+                if (closed) return;
+                if (delay == 0 && held.isEmpty()) {
+                    show(frame);
+                    return;
+                }
+                VideoFrame copy = hold(frame);
+                if (copy == null) return;
+                held.add(copy);
+            }
+            delayed.postDelayed(showNext, delay);
+        }
+
+        /**
+         * Keeps a frame for later. Hardware-decoder frames live in the decoder's single output texture,
+         * which must be returned straight away, so those are copied to memory first.
+         */
+        private VideoFrame hold(VideoFrame frame) {
+            VideoFrame.Buffer b = frame.getBuffer();
+            if (b instanceof VideoFrame.TextureBuffer) {
+                VideoFrame.I420Buffer copy = b.toI420();
+                return copy == null ? null : new VideoFrame(copy, frame.getRotation(), frame.getTimestampNs());
+            }
+            frame.retain();
+            return frame;
+        }
+
+        void close() {
+            synchronized (held) {
+                closed = true;
+                for (VideoFrame f : held) f.release();
+                held.clear();
+            }
+        }
+
+        private void show(VideoFrame frame) {
             view.onFrame(frame);
             count++;
             if (!seen) {
@@ -431,6 +492,7 @@ class NativePlayer {
                 public void run() {
                     if (videoTrack == track) return;
                     if (videoTrack != null && gate != null) videoTrack.removeSink(gate);
+                    if (gate != null) gate.close();
                     videoTrack = (VideoTrack) track;
                     gate = new FrameGate();
                     videoTrack.addSink(gate);
