@@ -208,7 +208,8 @@ const RECEIVER = 'file://' + path.resolve(__dirname, '../../receiver-android/ass
   await win.click('#stop');
   await receiver.waitForFunction(() => getComputedStyle(document.getElementById('idle')).display === 'flex', null, { timeout: 5000 });
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().filter((w) => w.getTitle() !== 'Projector Cast').forEach((w) => w.close()));
-  await win.waitForTimeout(500);
+  // The window list catches up with the window manager after a moment.
+  await win.waitForFunction(async () => !(await window.cast.listScreens()).some((x) => x.name === 'Match Window'), null, { timeout: 10000, polling: 300 });
   await win.evaluate(() => window.cast.prepareCapture({ screenId: selectedId, screenName: 'Match Window', audio: false }));
   const refused = await win.evaluate(() => navigator.mediaDevices.getDisplayMedia({ video: true }).then((s) => { s.getTracks().forEach((t) => t.stop()); return false; }, () => true));
   assert(refused, 'closed window is not silently replaced by the whole screen');

@@ -424,6 +424,10 @@ public class MainActivity extends Activity implements CastServer.Handler {
         do {
             next = ((next - 1 + step + 4) % 4) + 1;
         } while (next == 1 && player == null);
+        setDisplayMode(next);
+    }
+
+    private void setDisplayMode(int next) {
         boolean wasNative = mode == 1;
         log("display mode " + mode + " -> " + next);
         mode = next;
@@ -656,8 +660,9 @@ public class MainActivity extends Activity implements CastServer.Handler {
             {"Forward", "forward"},
             {"Previous", "previous"},
             {"Next", "next"},
+            {"Reset all settings", null},
     };
-    private static final int RESET_ROW = 4, SYNC_ROW = 5, FIRST_PC_ROW = 6;
+    private static final int RESET_ROW = 4, SYNC_ROW = 5, FIRST_PC_ROW = 6, RESET_ALL_ROW = 11;
     private static final Map<String, String> KEY_NAMES = new HashMap<String, String>();
 
     static {
@@ -785,6 +790,7 @@ public class MainActivity extends Activity implements CastServer.Handler {
         for (int i = 0; i < SETTINGS.length + ROWS.length; i++) {
             if (i == SYNC_ROW) b.append("\nSound\n");
             if (i == FIRST_PC_ROW) b.append("\nPC\n");
+            if (i == RESET_ALL_ROW) b.append('\n');
             boolean sel = i == menuRow;
             b.append(sel ? "\u25b8 " : "  ");
             if (i < SETTINGS.length || i == SYNC_ROW) {
@@ -804,6 +810,11 @@ public class MainActivity extends Activity implements CastServer.Handler {
             b.append("\nMouth moves after the voice: lower. Voice before the mouth: raise.\n");
             if (bluetoothOut && !syncAuto()) b.append("OK: back to Auto (measured)\n");
             else if (measuring) b.append("Measuring the speaker\u2026\n");
+        }
+        if (menuRow == RESET_ALL_ROW) {
+            b.append(confirmResetUntil > SystemClock.uptimeMillis()
+                    ? "\nPress OK again to reset picture, lip sync, display mode and decoder.\n"
+                    : "\nPicture, lip sync (measured again), display mode and decoder. The code stays.\n");
         }
         b.append("\n\u25b2\u25bc choose  \u25c0\u25b6 change  OK select  Back close");
         menuView.setText(b.toString());
@@ -840,6 +851,14 @@ public class MainActivity extends Activity implements CastServer.Handler {
             setMenu(true);
         } else if (menuRow < SETTINGS.length || menuRow == SYNC_ROW) {
             setMenu(false);
+        } else if (menuRow == RESET_ALL_ROW) {
+            if (confirmResetUntil > SystemClock.uptimeMillis()) {
+                confirmResetUntil = 0;
+                resetAll();
+            } else {
+                confirmResetUntil = SystemClock.uptimeMillis() + 5000;
+            }
+            setMenu(true);
         } else if (menuRow == RESET_ROW) {
             SharedPreferences.Editor e = prefs().edit();
             for (String k : SETTING_KEYS) e.remove(k);
@@ -851,6 +870,28 @@ public class MainActivity extends Activity implements CastServer.Handler {
             sendToPc(ROWS[menuRow - SETTINGS.length][1]);
             setMenu(true);
         }
+    }
+
+    private long confirmResetUntil;
+
+    /** Back to the settings of a new install, except the code. Lip sync is measured again. */
+    private void resetAll() {
+        SharedPreferences.Editor e = prefs().edit();
+        for (String k : SETTING_KEYS) e.remove(k);
+        for (String k : new String[]{"syncBluetooth", "syncSpeaker", "measuredBluetooth", "measuredSpeaker", "playerMode", "decoder"}) e.remove(k);
+        e.apply();
+        log("all settings reset");
+        applyPicture();
+        applySync();
+        measureSync();
+        autoSwitches = 0;
+        if (player != null && player.strategy() != 0) {
+            if (nativeCasting()) switchDecoder(0, "Decoder: "); // the PC reconnects by itself
+            else player.setStrategy(0);
+        }
+        int defaultMode = player != null ? 1 : 2;
+        if (mode != defaultMode) setDisplayMode(defaultMode);
+        showBadge("All settings reset", 3000);
     }
 
     /** Sends a remote key to the PC over the casting connection. */

@@ -51,6 +51,10 @@ The menu adjusts **Brightness**, **Contrast** and **Colour** (−50 to +50) and 
 
 Bluetooth speakers and headphones play sound late, from about 150 ms to over 500 ms on some speakers. The projector shows the picture later by the same amount. With Bluetooth this is automatic: when a speaker connects, the projector measures its delay (it plays a second of silence) and uses that. **Menu → Sound → Lip sync** shows the value (*Auto*); ◀ ▶ sets it by hand in 20 ms steps up to 1500 ms (lower it if the mouth moves after the voice, raise it if the voice comes before the mouth), and OK returns to *Auto*. The built-in speaker has its own value, 0 by default.
 
+### Reset all settings
+
+**Menu → Reset all settings** (press OK twice) returns the projector app to how it was when first installed: picture settings to 0, lip sync to *Auto* (the speaker is measured again), display mode 1 and the hardware decoder. The projector code does not change, so PCs that know it keep working.
+
 ### Controlling the PC
 
 The PC section of the menu, or the media keys on the remote, control what is playing on the PC:
