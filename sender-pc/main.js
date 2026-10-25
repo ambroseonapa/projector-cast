@@ -446,11 +446,16 @@ function appAudioSupported() {
 
 ipcMain.handle('app-audio-supported', () => appAudioSupported());
 
-// Full-line comments and indentation are dropped to stay within the command-line length limit.
-function appAudioScript(windowHandle, mute) {
-  const src = fs.readFileSync(path.join(__dirname, 'app-audio.ps1'), 'utf8')
-    .split(/\r?\n/).map((l) => l.trim()).filter((l) => l && !/^(#|\/\/)/.test(l)).join('\r\n');
-  return `$TargetWindow = ${Number(windowHandle)}; $Mute = $${mute ? 'true' : 'false'}\r\n${src}`;
+/** The helper with its settings in front; run from a file, as it is too long for a command line. */
+function appAudioCommand(target, mute) {
+  const src = fs.readFileSync(path.join(__dirname, 'app-audio.ps1'), 'utf8');
+  const rect = target.rect ? `@(${target.rect.map(Math.round).join(', ')})` : '$null';
+  const file = path.join(app.getPath('userData'), 'app-audio-run.ps1');
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, `$TargetWindow = ${Number(target.window) || 0}; $ScreenRect = ${rect}; `
+    + `$SelfPid = ${process.pid}; $Mute = $${mute ? 'true' : 'false'}\r\n${src}`);
+  // Read as text and run: not affected by the script execution policy.
+  return `. ([scriptblock]::Create([IO.File]::ReadAllText('${file.replace(/'/g, "''")}')))`;
 }
 
 function stopAppAudio() {
@@ -463,13 +468,21 @@ function stopAppAudio() {
   setTimeout(() => { if (a.proc.exitCode === null) a.proc.kill(); }, 4000);
 }
 
-/** Starts capturing the app that owns this window ("window:<handle>:0"); PCM goes out as 'app-audio' messages. */
-ipcMain.handle('app-audio-start', (_e, { windowId, mute }) => new Promise((resolve, reject) => {
+/**
+ * Starts capturing the app that owns a window ("window:<handle>:0"), or the apps with a window on a
+ * screen (displayId). The PCM goes out as 'app-audio' messages.
+ */
+ipcMain.handle('app-audio-start', (_e, { windowId, displayId, mute }) => new Promise((resolve, reject) => {
   stopAppAudio();
-  const handle = /^window:(\d+):/.exec(String(windowId));
-  if (!handle) return reject(new Error('not a window'));
-  const encoded = Buffer.from(appAudioScript(handle[1], mute), 'utf16le').toString('base64');
-  const proc = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Mta', '-EncodedCommand', encoded],
+  const target = {};
+  const handle = /^window:(\d+):/.exec(String(windowId || ''));
+  const d = displayId != null && screen.getAllDisplays().find((x) => String(x.id) === String(displayId));
+  if (handle) target.window = handle[1];
+  else if (d) {
+    const r = screen.dipToScreenRect(null, d.bounds);
+    target.rect = [r.x, r.y, r.x + r.width, r.y + r.height];
+  } else return reject(new Error('nothing to capture'));
+  const proc = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Mta', '-Command', appAudioCommand(target, mute)],
     { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
   const a = { proc, stopping: false };
   appAudio = a;
@@ -485,7 +498,14 @@ ipcMain.handle('app-audio-start', (_e, { windowId, mute }) => new Promise((resol
     if (whole && win && !win.isDestroyed()) win.webContents.send('app-audio', data.subarray(0, whole));
     begin();
   });
-  proc.stderr.on('data', (c) => { errors += c; });
+  proc.stderr.on('data', (c) => {
+    // "shared: a, b": apps with windows on the cast screen and elsewhere; their sound plays on both.
+    for (const line of String(c).split(/\r?\n/)) {
+      const m = /^shared: (.*)$/.exec(line);
+      if (m && win && !win.isDestroyed()) win.webContents.send('app-audio-shared', m[1]);
+      else if (line.trim()) errors += line + '\n';
+    }
+  });
   proc.stdin.on('error', () => { /* helper exited */ });
   proc.on('error', (e) => { if (!started) reject(e); });
   proc.on('exit', () => {

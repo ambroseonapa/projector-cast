@@ -243,7 +243,7 @@ async function switchSource(s) {
     await window.cast.prepareCapture({ screenId: s.id, screenName: s.name, displayId: s.display, audio: false, muteLocal: $('muteLocal').checked });
     await session.switchSource();
     $('castingWhat').textContent = describe(s);
-    if (appAudio && soundChoice === 'same' && s.kind === 'window') await switchSound('same');
+    if (appAudio && soundChoice === 'same') await switchSound('same');
   } catch (e) {
     showError(cleanError(e));
   }
@@ -329,7 +329,7 @@ async function vddAction(button, work, busyText) {
 
 // ---- Sound of one app (Windows) ----
 
-// 'pc' (whole PC), 'same' (the app shown in the picture) or 'app:<name>'.
+// 'pc' (whole PC), 'same' (match the picture: its app, or the apps on the cast screen) or 'app:<name>'.
 let soundChoice = 'same';
 let appAudio = null;
 
@@ -342,21 +342,30 @@ function soundApps() {
   return [...byName.values()].sort((a, b) => appName(a).localeCompare(appName(b)));
 }
 
-/** The window whose app's sound is sent; null for the whole PC; undefined if not available. */
-function soundWindow(choice, picture) {
+/**
+ * What to capture: { windowId } for one app, { displayId } for the apps on a screen, null for the
+ * whole PC, undefined if not available. `label` and `source` describe it in the picker.
+ */
+function soundTarget(choice, picture) {
   if (choice === 'pc') return null;
-  if (choice === 'same') return picture && picture.kind === 'window' ? picture : undefined;
-  return sources.find((s) => s.kind === 'window' && appName(s) === choice.slice(4));
+  if (choice === 'same') {
+    if (!picture) return undefined;
+    if (picture.kind === 'window') return { windowId: picture.id, label: appName(picture), source: picture };
+    return picture.display ? { displayId: picture.display, label: `Apps on ${picture.title}`, source: picture } : undefined;
+  }
+  const w = sources.find((s) => s.kind === 'window' && appName(s) === choice.slice(4));
+  return w ? { windowId: w.id, label: appName(w), source: w } : undefined;
 }
 
 function soundLabel(choice) {
-  return choice === 'pc' ? 'Whole PC' : choice === 'same' ? 'Same app as the picture' : choice.slice(4);
+  return choice === 'pc' ? 'Whole PC' : choice === 'same' ? 'Match the picture' : choice.slice(4);
 }
 
 function renderSoundPicker(box, onPick) {
   const wasOpen = !!(box.querySelector('details') || {}).open;
   box.textContent = '';
-  const w = soundWindow(soundChoice, selectedSource());
+  const t = soundTarget(soundChoice, selectedSource());
+  const w = t && t.source;
   const details = el('details');
   details.open = wasOpen;
   const summary = el('summary');
@@ -367,9 +376,9 @@ function renderSoundPicker(box, onPick) {
   const name = el('span', 'name');
   name.append(el('b', null, soundLabel(soundChoice)));
   const sub = el('small');
-  if (soundChoice === 'same') sub.textContent = w ? appName(w) : 'The picture is a whole screen: choose an app';
-  else if (soundChoice !== 'pc' && !w) sub.textContent = 'Not open';
-  else if (w) sub.append(icon(w.icon), document.createTextNode('Only this app'));
+  if (soundChoice === 'same') sub.textContent = t ? t.label : 'Choose a source first';
+  else if (soundChoice !== 'pc' && !t) sub.textContent = 'Not open';
+  else if (t) sub.append(icon(w.icon), document.createTextNode('Only this app'));
   else sub.textContent = 'Everything you hear on this PC';
   name.append(sub);
   summary.append(thumb, name, el('span', 'chev', '▼'));
@@ -401,7 +410,7 @@ function renderSoundPicker(box, onPick) {
   };
   card('pc', 'Whole PC');
   const pic = selectedSource();
-  card('same', 'Same app as the picture', pic && pic.kind === 'window' ? pic.thumb : null);
+  card('same', pic && pic.kind === 'screen' ? 'Apps on the cast screen' : 'Same app as the picture', pic ? pic.thumb : null);
   for (const a of soundApps()) card('app:' + appName(a), appName(a), a.thumb, a.icon);
   body.append(grid);
   details.append(body);
@@ -419,8 +428,8 @@ async function switchSound(choice) {
   if (!session) return;
   showError('');
   try {
-    const w = soundWindow(choice, selectedSource());
-    if (w === undefined) throw new Error(choice === 'same' ? 'The picture is a whole screen: choose which app to hear.' : 'That app is not open.');
+    const w = soundTarget(choice, selectedSource());
+    if (w === undefined) throw new Error('That app is not open.');
     if (w === null) {
       if (!appAudio) return;
       // Back to the whole PC's sound: capture it again, keep only the sound.
@@ -435,7 +444,7 @@ async function switchSound(choice) {
       return;
     }
     const wasApp = !!appAudio;
-    const track = await startAppAudio(w.id, $('muteLocal').checked);
+    const track = await startAppAudio(w, $('muteLocal').checked);
     if (!wasApp) await session.setAudioTrack(track);
   } catch (e) {
     showError(cleanError(e));
@@ -446,7 +455,7 @@ async function switchSound(choice) {
  * Starts the helper for the app that owns this window and returns the audio track playing its sound.
  * While already running, only the app changes; the track stays the same.
  */
-async function startAppAudio(windowId, mute) {
+async function startAppAudio(target, mute) {
   if (!appAudio) {
     const ctx = new AudioContext({ sampleRate: 48000 });
     await ctx.audioWorklet.addModule('app-audio-worklet.js');
@@ -460,7 +469,7 @@ async function startAppAudio(windowId, mute) {
     appAudio = { ctx, track, off: window.cast.onAppAudio((data) => node.port.postMessage(data)) };
   }
   try {
-    await window.cast.appAudioStart(windowId, mute);
+    await window.cast.appAudioStart({ windowId: target.windowId, displayId: target.displayId }, mute);
   } catch (e) {
     if (!session) stopAppAudio();
     throw new Error(`Could not capture the app's sound: ${cleanError(e)}`);
@@ -590,6 +599,12 @@ async function init() {
     $('appSound').hidden = false;
     soundChoice = store('soundChoice') || 'same';
     $('audio').addEventListener('change', updateSoundUi);
+    window.cast.onAppAudioShared((names) => {
+      $('liveHint').textContent = names
+        ? `${names} has windows on both screens, so its sound plays on both. Use a different app (for example another browser) on each screen.`
+        : '';
+      $('liveHint').hidden = !names;
+    });
     window.cast.onAppAudioEnded((why) => {
       $('liveHint').textContent = `The app's sound stopped (${why}). Start casting again to send it.`;
       $('liveHint').hidden = false;
@@ -668,13 +683,9 @@ async function start() {
     const appMode = $('audio').checked && !$('appSound').hidden && soundChoice !== 'pc';
     let extraAudio = null;
     if (appMode) {
-      const w = soundWindow(soundChoice, source);
-      if (!w) {
-        throw new Error(soundChoice === 'same'
-          ? 'The picture is a whole screen: under Sound from, choose which app to hear.'
-          : `${soundLabel(soundChoice)} is not open. Choose another app under Sound from.`);
-      }
-      extraAudio = await startAppAudio(w.id, $('muteLocal').checked);
+      const w = soundTarget(soundChoice, source);
+      if (!w) throw new Error(`${soundLabel(soundChoice)} is not open. Choose another app under Sound from.`);
+      extraAudio = await startAppAudio(w, $('muteLocal').checked);
     }
     await window.cast.prepareCapture({
       screenId: source.id, screenName: source.name, displayId: source.display, audio: $('audio').checked && !appMode, muteLocal: $('muteLocal').checked,

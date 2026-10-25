@@ -196,27 +196,31 @@ const RECEIVER = 'file://' + path.resolve(__dirname, '../../receiver-android/ass
   const edge = await win.locator('#picker .pick-card[title="Song - YouTube and 3 more pages - Work - Microsoft Edge"]').textContent();
   assert(/^Song - YouTube\+3 tabs · Work$/.test(edge), 'browser window title split: ' + edge);
   console.log('PASS windows grouped by application, browser titles shortened: "' + edge + '"');
-  // Sound picker (shown on Windows only): the same open apps, plus Whole PC and "Same app as the picture".
+  // Sound picker (shown on Windows only): the open apps, plus Whole PC and "Match the picture".
   const sound = await win.evaluate(() => {
     document.getElementById('appSound').hidden = false;
     renderAllPickers();
     const choices = [...document.querySelectorAll('#soundPicker .pick-card')].map((c) => c.dataset.choice);
-    const edgeWin = soundWindow('app:Microsoft Edge', selectedSource());
+    const edgeWin = sources.find((x) => x.app === 'Microsoft Edge');
+    const app = soundTarget('app:Microsoft Edge', null);
+    const onScreen = soundTarget('same', { kind: 'screen', display: '7', title: 'Screen 2 (virtual)' });
     const out = {
       choices,
-      edge: edgeWin && edgeWin.name,
-      sameOnScreen: soundWindow('same', sources.find((x) => x.kind === 'screen')),
-      sameFollowsPicture: soundWindow('same', edgeWin) === edgeWin,
-      pc: soundWindow('pc', edgeWin),
+      app: app && app.windowId === edgeWin.id && app.label,
+      screen: onScreen && onScreen.displayId + ' / ' + onScreen.label,
+      window: soundTarget('same', edgeWin).windowId === edgeWin.id,
+      pc: soundTarget('pc', edgeWin),
+      closed: soundTarget('app:Closed App', edgeWin),
     };
     document.getElementById('appSound').hidden = true;
     renderAllPickers();
     return out;
   });
-  assert.deepStrictEqual(sound.choices.slice(0, 2), ['pc', 'same'], 'Whole PC and Same app first: ' + sound.choices);
+  assert.deepStrictEqual(sound.choices.slice(0, 2), ['pc', 'same'], 'Whole PC and Match the picture first: ' + sound.choices);
   assert(sound.choices.includes('app:Microsoft Edge') && sound.choices.includes('app:Match Window'), 'one card per open app: ' + sound.choices);
-  assert(/Microsoft Edge$/.test(sound.edge) && sound.sameOnScreen === undefined && sound.sameFollowsPicture && sound.pc === null, JSON.stringify(sound));
-  console.log('PASS sound picker lists the open apps; "Same app" follows the picture: ' + sound.choices.join(', '));
+  assert.deepStrictEqual([sound.app, sound.screen, sound.window, sound.pc, sound.closed],
+    ['Microsoft Edge', '7 / Apps on Screen 2 (virtual)', true, null, undefined], JSON.stringify(sound));
+  console.log('PASS sound picker: open apps; "Match the picture" means the window\'s app, or the apps on the cast screen');
   await win.fill('#picker .tools input', 'match');
   assert.strictEqual(await win.locator('#picker .pick-card').count(), 1, 'search filters the list');
   await win.fill('#picker .tools input', '');

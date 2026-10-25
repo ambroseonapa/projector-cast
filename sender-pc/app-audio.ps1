@@ -1,7 +1,8 @@
-# Captures the sound of one process tree (Windows process loopback, build 20348 or later) and writes
-# it to stdout as 48 kHz stereo 16-bit PCM. With $Mute, that app is also muted on this PC while
-# casting; it is unmuted when stdin closes or receives "stop".
-# main.js puts "$TargetWindow = <window handle>; $Mute = <bool>" in front of this script.
+# Captures the sound of one app, or of the apps showing on one screen (Windows process loopback,
+# build 20348 or later), mixes it and writes it to stdout as 48 kHz stereo 16-bit PCM. With $Mute,
+# those apps are muted on this PC meanwhile; they are unmuted when stdin closes or receives "stop".
+# main.js puts $TargetWindow (a window handle, or 0), $ScreenRect (left, top, right, bottom in screen
+# pixels, when capturing the apps on a screen), $SelfPid and $Mute in front of this script.
 
 $ErrorActionPreference = 'Stop'
 
@@ -138,22 +139,59 @@ public static class AppAudio {
         return app;
     }
 
+    [DllImport("user32.dll")] static extern bool EnumWindows(EnumProc callback, IntPtr param);
+    [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr window);
+    [DllImport("user32.dll")] static extern bool IsIconic(IntPtr window);
+    [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr window, out Rect rect);
+    [DllImport("user32.dll")] static extern bool SetProcessDpiAwarenessContext(IntPtr value);
+    [DllImport("dwmapi.dll")] static extern int DwmGetWindowAttribute(IntPtr window, int attribute, out int value, int size);
+    public struct Rect { public int Left, Top, Right, Bottom; }
+
+    /// Processes with a visible window centred inside (or, with inside false, outside) this screen area.
+    public static uint[] PidsOnScreen(int left, int top, int right, int bottom, bool inside) {
+        SetProcessDpiAwarenessContext(new IntPtr(-4)); // real pixel positions on scaled screens
+        HashSet<uint> found = new HashSet<uint>();
+        EnumWindows(delegate (IntPtr w, IntPtr param) {
+            Rect r;
+            int cloaked;
+            if (!IsWindowVisible(w) || IsIconic(w) || !GetWindowRect(w, out r)) return true;
+            if (DwmGetWindowAttribute(w, 14, out cloaked, 4) == 0 && cloaked != 0) return true; // on another desktop
+            if (r.Right - r.Left < 100 || r.Bottom - r.Top < 60) return true;
+            int cx = (r.Left + r.Right) / 2, cy = (r.Top + r.Bottom) / 2;
+            if ((cx >= left && cx < right && cy >= top && cy < bottom) != inside) return true;
+            uint pid = PidOfWindow(w.ToInt64());
+            if (pid != 0) found.Add(pid);
+            return true;
+        }, IntPtr.Zero);
+        uint[] result = new uint[found.Count];
+        found.CopyTo(result);
+        return result;
+    }
+
+    /// Sound captured from one process tree, waiting to be mixed.
+    class Source {
+        public volatile bool Stop;
+        public readonly short[] Ring = new short[48000 * 2];
+        public int Read, Size;
+        public bool Primed;
+    }
+
+    static readonly Dictionary<uint, Source> sources = new Dictionary<uint, Source>();
     static volatile bool stopping;
-    static Thread captureThread;
+    static Thread mixer;
 
     public static void Stop() { stopping = true; }
 
-    /// True once capturing has ended: stopped, failed, or stdin closed.
-    public static bool Finished { get { return stopping || !captureThread.IsAlive; } }
+    /// True once capturing has ended: stopped, or stdout/stdin closed.
+    public static bool Finished { get { return stopping || mixer == null || !mixer.IsAlive; } }
 
-    /// Captures on a background thread; "stop" or the end of stdin stops it.
-    public static void Start(uint pid) {
-        captureThread = new Thread(delegate () {
-            try { Capture(pid); }
-            catch (Exception e) { Console.Error.WriteLine(e.Message); }
-        });
-        captureThread.IsBackground = true;
-        captureThread.Start();
+    public static void Join() { if (mixer != null) mixer.Join(1000); }
+
+    /// Starts the mixer; "stop" or the end of stdin stops everything.
+    public static void Start() {
+        mixer = new Thread(Mix);
+        mixer.IsBackground = true;
+        mixer.Start();
         Thread watch = new Thread(delegate () {
             try {
                 string line;
@@ -165,10 +203,77 @@ public static class AppAudio {
         watch.Start();
     }
 
-    public static void Join() { captureThread.Join(1000); }
+    /// From now on captures exactly these processes (each with its child processes).
+    public static void SetSources(uint[] pids) {
+        lock (sources) {
+            HashSet<uint> want = new HashSet<uint>(pids);
+            foreach (uint pid in new List<uint>(sources.Keys)) {
+                if (want.Contains(pid)) continue;
+                sources[pid].Stop = true;
+                sources.Remove(pid);
+            }
+            foreach (uint pid in want) {
+                if (sources.ContainsKey(pid)) continue;
+                Source src = new Source();
+                uint target = pid;
+                sources[pid] = src;
+                Thread t = new Thread(delegate () {
+                    try { Capture(target, src); }
+                    catch (Exception e) { Console.Error.WriteLine(e.Message); }
+                });
+                t.IsBackground = true;
+                t.Start();
+            }
+        }
+    }
 
-    /// Writes the sound of process tree `pid` to stdout until Stop().
-    public static void Capture(uint pid) {
+    /// Every few ms: adds up what the sources captured and writes it to stdout, in real time.
+    static void Mix() {
+        Stream stdout = Console.OpenStandardOutput();
+        System.Diagnostics.Stopwatch clock = System.Diagnostics.Stopwatch.StartNew();
+        long written = 0; // frames
+        int[] sum = new int[4800 * 2];
+        byte[] bytes = new byte[4800 * 4];
+        try {
+            while (!stopping) {
+                Thread.Sleep(5);
+                long due = clock.ElapsedMilliseconds * 48 - written;
+                if (due > 48000) { written += due - 4800; due = 4800; } // was held up: don't try to catch up
+                if (due < 240) continue;
+                int frames = (int)Math.Min(due, 4800);
+                Array.Clear(sum, 0, frames * 2);
+                Source[] all;
+                lock (sources) {
+                    all = new Source[sources.Count];
+                    sources.Values.CopyTo(all, 0);
+                }
+                foreach (Source src in all) {
+                    lock (src) {
+                        if (!src.Primed && src.Size >= 960 * 2) src.Primed = true; // 20 ms in hand
+                        if (!src.Primed) continue;
+                        int n = Math.Min(src.Size, frames * 2);
+                        for (int i = 0; i < n; i++) sum[i] += src.Ring[(src.Read + i) % src.Ring.Length];
+                        src.Read = (src.Read + n) % src.Ring.Length;
+                        src.Size -= n;
+                        if (n < frames * 2) src.Primed = false;
+                    }
+                }
+                for (int i = 0; i < frames * 2; i++) {
+                    int v = Math.Max(-32768, Math.Min(32767, sum[i]));
+                    bytes[2 * i] = (byte)v;
+                    bytes[2 * i + 1] = (byte)(v >> 8);
+                }
+                stdout.Write(bytes, 0, frames * 4);
+                stdout.Flush();
+                written += frames;
+            }
+        } catch (IOException) {
+            stopping = true; // stdout closed: the PC app is gone
+        }
+    }
+
+    /// Captures process tree `pid` into `src` until it or everything is stopped.
+    static void Capture(uint pid, Source src) {
         // AUDIOCLIENT_ACTIVATION_PARAMS: type PROCESS_LOOPBACK (1), target pid, mode INCLUDE_TARGET_PROCESS_TREE (0)
         IntPtr p = Marshal.AllocHGlobal(12);
         Marshal.WriteInt32(p, 0, 1);
@@ -207,29 +312,38 @@ public static class AppAudio {
         client.GetService(ref captureIid, out svc);
         IAudioCaptureClient capture = (IAudioCaptureClient)svc;
 
-        Stream stdout = Console.OpenStandardOutput();
-        byte[] buf = new byte[0];
+        short[] buf = new short[0];
         client.Start();
         try {
-            while (!stopping) {
+            while (!stopping && !src.Stop) {
                 ready.WaitOne(100);
                 uint next;
                 capture.GetNextPacketSize(out next);
-                while (next > 0 && !stopping) {
+                while (next > 0 && !stopping && !src.Stop) {
                     IntPtr data; uint frames, flags; ulong pos, qpc;
                     capture.GetBuffer(out data, out frames, out flags, out pos, out qpc);
-                    int bytes = (int)frames * 4;
-                    if (buf.Length < bytes) buf = new byte[bytes];
-                    if ((flags & 2) != 0) Array.Clear(buf, 0, bytes); // silent packet
-                    else Marshal.Copy(data, buf, 0, bytes);
+                    int samples = (int)frames * 2;
+                    if (buf.Length < samples) buf = new short[samples];
+                    if ((flags & 2) != 0) Array.Clear(buf, 0, samples); // silent packet
+                    else Marshal.Copy(data, buf, 0, samples);
                     capture.ReleaseBuffer(frames);
-                    stdout.Write(buf, 0, bytes);
+                    lock (src) {
+                        int cap = src.Ring.Length;
+                        for (int i = 0; i < samples; i++) {
+                            src.Ring[(src.Read + src.Size) % cap] = buf[i];
+                            if (src.Size < cap) src.Size++;
+                            else src.Read = (src.Read + 1) % cap;
+                        }
+                        // Fallen behind the mixer: keep the delay short.
+                        if (src.Size > 48000 * 2 / 5) {
+                            int skip = src.Size - 48000 * 2 * 6 / 100;
+                            src.Read = (src.Read + skip) % cap;
+                            src.Size -= skip;
+                        }
+                    }
                     capture.GetNextPacketSize(out next);
                 }
-                stdout.Flush();
             }
-        } catch (IOException) {
-            // stdout closed: the PC app is gone
         } finally {
             client.Stop();
         }
@@ -268,11 +382,11 @@ public static class AppAudio {
 
 if ($env:PCAST_COMPILE_ONLY) { exit 0 }
 
-# The app and all its child processes (browsers play sound from a child process).
-function Get-Tree([uint32]$root) {
+# The given apps and all their child processes (browsers play sound from a child process).
+function Get-Tree([uint32[]]$roots) {
   $all = Get-CimInstance Win32_Process -Property ProcessId, ParentProcessId
   $tree = New-Object 'System.Collections.Generic.HashSet[uint32]'
-  [void]$tree.Add($root)
+  foreach ($r in $roots) { [void]$tree.Add($r) }
   do {
     $added = $false
     foreach ($p in $all) {
@@ -282,17 +396,61 @@ function Get-Tree([uint32]$root) {
   ,$tree
 }
 
-$TargetPid = [ProjectorCast.AppAudio]::PidOfWindow([long]$TargetWindow)
-if ($TargetPid -eq 0) { [Console]::Error.WriteLine('the window was closed'); exit 1 }
-[ProjectorCast.AppAudio]::Start([uint32]$TargetPid)
+# Windows' own processes, whose windows can sit on any screen.
+$skip = @('explorer', 'ApplicationFrameHost', 'TextInputHost', 'ShellExperienceHost', 'StartMenuExperienceHost',
+  'SearchHost', 'SearchApp', 'LockApp', 'dwm', 'ProjectorCast', 'Projector Cast', 'electron')
+
+# What the projector hears: the app of the chosen window, or the apps with a window on the cast screen.
+# Apps that also have a window on another screen are heard but not muted here ($state.shared).
+function Get-Targets {
+  if ($TargetWindow) {
+    $p = [ProjectorCast.AppAudio]::PidOfWindow([long]$TargetWindow)
+    $state.shared = @()
+    if ($p) { return ,@([uint32]$p) }
+    return ,@()
+  }
+  $r = $ScreenRect
+  $elsewhere = [ProjectorCast.AppAudio]::PidsOnScreen($r[0], $r[1], $r[2], $r[3], $false)
+  $found = @([ProjectorCast.AppAudio]::PidsOnScreen($r[0], $r[1], $r[2], $r[3], $true) | Where-Object {
+    $proc = Get-Process -Id $_ -ErrorAction SilentlyContinue
+    $_ -ne $SelfPid -and $proc -and $skip -notcontains $proc.ProcessName
+  } | ForEach-Object { [uint32]$_ })
+  $state.shared = @($found | Where-Object { $elsewhere -contains $_ })
+  ,$found
+}
+
+$state = @{ shared = @(); told = '' }
+function Tell-Shared {
+  # Shown in the PC app: these apps' sound cannot be kept apart per window.
+  $names = (@($state.shared | ForEach-Object { (Get-Process -Id $_ -ErrorAction SilentlyContinue).ProcessName } | Sort-Object -Unique) -join ', ')
+  if ($names -ne $state.told) { [Console]::Error.WriteLine("shared: $names"); $state.told = $names }
+}
+function Muted-Part($pids) { ,@($pids | Where-Object { $state.shared -notcontains $_ }) }
+
+$current = Get-Targets
+if ($TargetWindow -and $current.Count -eq 0) { [Console]::Error.WriteLine('the window was closed'); exit 1 }
+[ProjectorCast.AppAudio]::SetSources([uint32[]]$current)
+[ProjectorCast.AppAudio]::Start()
+$muted = @()
 try {
   while (-not [ProjectorCast.AppAudio]::Finished) {
-    # Re-applied regularly: an app opens a new sound session when it starts playing again.
-    if ($Mute) { try { [ProjectorCast.AppAudio]::SetMute((Get-Tree $TargetPid), $true) } catch { } }
+    Tell-Shared
+    if ($Mute) {
+      $want = Muted-Part $current
+      $unmute = @($muted | Where-Object { $want -notcontains $_ })
+      try {
+        if ($unmute.Count) { [ProjectorCast.AppAudio]::SetMute((Get-Tree $unmute), $false) }
+        # Re-applied regularly: an app opens a new sound session when it starts playing again.
+        if ($want.Count) { [ProjectorCast.AppAudio]::SetMute((Get-Tree $want), $true) }
+      } catch { }
+      $muted = $want
+    }
     Start-Sleep -Milliseconds 1500
+    $current = Get-Targets
+    [ProjectorCast.AppAudio]::SetSources([uint32[]]$current)
   }
 } finally {
   [ProjectorCast.AppAudio]::Stop()
-  if ($Mute) { try { [ProjectorCast.AppAudio]::SetMute((Get-Tree $TargetPid), $false) } catch { } }
+  if ($muted.Count) { try { [ProjectorCast.AppAudio]::SetMute((Get-Tree $muted), $false) } catch { } }
   [ProjectorCast.AppAudio]::Join()
 }

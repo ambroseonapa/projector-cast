@@ -49,7 +49,15 @@ The menu adjusts **Brightness**, **Contrast** and **Colour** (−50 to +50) and 
 
 ### Sound from one app (Windows 10 build 20348 / Windows 11)
 
-**Sound from** chooses what the projector hears: **Whole PC**, **Same app as the picture** (casting an Edge window sends Edge's sound), or any open app, shown with its icon and window like the sources. It can be changed while casting under **Settings**; with *Same app as the picture* the sound follows when you switch windows. With **Mute this app on the PC while casting**, that app plays on the projector only while the rest of the PC keeps its sound (children can watch on the projector while you are in a meeting). Muting is undone when casting stops. A browser plays all its tabs together; to separate two things, use two browsers.
+**Sound from** chooses what the projector hears:
+
+- **Whole PC** — everything.
+- **Match the picture** — casting a window sends that app's sound; casting a screen (such as the second screen) sends the sound of the apps showing on it, following as windows are moved on or off it.
+- **An open app**, shown with its icon and window like the sources.
+
+It can be changed while casting under **Settings**. With **Mute this app on the PC while casting**, those apps play on the projector only and the rest of the PC keeps its sound (children can watch on the projector while you are in a meeting); they are unmuted when casting stops.
+
+Windows separates sound by app, not by window or tab: two Chrome windows are one app. Use a different app on each screen — for example Edge on the projector's screen and Chrome for yourself. An app with windows on both screens is heard on both, and the PC app says so.
 
 ### Lip sync
 
