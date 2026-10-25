@@ -49,7 +49,7 @@ The menu adjusts **Brightness**, **Contrast** and **Colour** (−50 to +50) and 
 
 ### Sound from one app (Windows 10 build 20348 / Windows 11)
 
-**Sound from → One app** sends only the chosen app's sound (for example Edge, Chrome, VLC or a virtual machine) to the projector; the rest of the PC keeps its sound. With **Mute this app on the PC while casting**, that app is silent on the PC and plays on the projector only — so children can watch on the projector while you are in a meeting on the PC. Muting is undone when casting stops. A browser plays all its tabs together, so to separate two things in browsers, use two browsers (e.g. Chrome on the projector, Edge for yourself).
+**Sound from** chooses what the projector hears: **Whole PC**, **Same app as the picture** (casting an Edge window sends Edge's sound), or any open app, shown with its icon and window like the sources. It can be changed while casting under **Settings**; with *Same app as the picture* the sound follows when you switch windows. With **Mute this app on the PC while casting**, that app plays on the projector only while the rest of the PC keeps its sound (children can watch on the projector while you are in a meeting). Muting is undone when casting stops. A browser plays all its tabs together; to separate two things, use two browsers.
 
 ### Lip sync
 
@@ -70,13 +70,13 @@ Windows is fully supported. On Linux, players that support MPRIS are controlled 
 
 ### Second screen (Windows)
 
-**Advanced → Second screen** installs the open-source [Virtual Display Driver](https://github.com/VirtualDrivers/Virtual-Display-Driver) (MIT). The app downloads the driver and [nefcon](https://github.com/nefarius/nefcon) (which adds the device) from their GitHub releases, checks them against fixed checksums, and installs them after the administrator prompt; Windows then asks you to confirm the driver. It adds a virtual monitor that extends the desktop; select it under **Source** (listed as *virtual*) and drag windows onto it. **Turn on / Turn off** enable or disable the device, and **Display settings** sets its resolution and position. These actions require administrator rights. To work on the second screen, open **Preview window** while casting: it shows the cast picture on this PC without the projector's delay, and stays on top. Set **Buffer → Low latency** as well; it also turns lip sync off, which otherwise holds the picture back. If the driver ever causes display problems, uninstall it from Device Manager → Display adapters.
+**Advanced → Second screen** installs the open-source [Virtual Display Driver](https://github.com/VirtualDrivers/Virtual-Display-Driver) (MIT). The app downloads the driver and [nefcon](https://github.com/nefarius/nefcon) (which adds the device) from their GitHub releases, checks them against fixed checksums, and installs them after the administrator prompt; Windows then asks you to confirm the driver. It adds a virtual monitor that extends the desktop; select it under **Source** (listed as *virtual*) and drag windows onto it. **Turn on / Turn off** enable or disable the device, and **Display settings** sets its resolution and position. These actions require administrator rights. To work on the second screen, open **Preview window** while casting: it shows the cast picture on this PC without the projector's delay, stays on top and opens where you last left it. When casting a whole screen on Windows, clicking (left or right) and scrolling in the preview are done on the cast screen, and the pointer stays on your screen. Set **Buffer → Low latency** as well; it also turns lip sync off, which otherwise holds the picture back. If the driver ever causes display problems, uninstall it from Device Manager → Display adapters.
 
 ## Troubleshooting
 
 | Symptom | Action |
 |---|---|
-| Projector not found | Put both devices on the same network (guest networks often block this), or enter the projector's IP address under **Advanced**. |
+| Projector not found | The PC looks at the projector's last address, then broadcasts, then asks every address on the network. If it still fails, check both devices are on the same network (guest networks often block this), or enter the projector's IP address under **Advanced**. |
 | Picture stalls | The projector switches decoder automatically. If it keeps stalling, choose display mode 4. |
 | Picture is choppy | Use **540p, 30 fps**. The PC lowers its frame rate to what the projector decodes; the status line shows *capped at N fps*. |
 | Video area black or frozen when casting a browser window | Browsers stop drawing video in covered or background windows. Keep the window visible, cast the entire screen, or turn off *Use graphics acceleration when available* in the browser's System settings. The PC app shows a notice when this happens. |

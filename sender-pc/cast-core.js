@@ -214,6 +214,18 @@
       if (this.events.onStream) this.events.onStream(this.stream);
     }
 
+    /** Replaces the sound being sent (e.g. another app's sound) without reconnecting. */
+    async setAudioTrack(track) {
+      const sender = this.pc && this.pc.getSenders().find((x) => x.track && x.track.kind === 'audio');
+      if (!sender) throw new Error('No sound is being sent. Turn on Send sound and start casting again.');
+      const old = sender.track;
+      await sender.replaceTrack(track);
+      this.stream.removeTrack(old);
+      this.stream.addTrack(track);
+      if (old !== track && old !== this.opts.extraAudio) old.stop();
+      this.opts.extraAudio = track;
+    }
+
     async connect() {
       if (this.stopped) return;
       this.closePc();

@@ -20,6 +20,8 @@ require(path.join(__dirname, '../../sender-pc/main.js'));
   let ok = 0;
   const pass = (m) => { ok++; console.log('PASS ' + m); };
 
+  const settingsFile = require('path').join(require('os').tmpdir(), 'settings.json');
+  require('fs').rmSync(settingsFile, { force: true });
   const found = await handlers['find-projector']({}, '482193');
   assert(found && found.name === 'Test Projector', 'discovery: ' + JSON.stringify(found));
   pass(`finds the projector by code via broadcast (${found.ip})`);
@@ -27,6 +29,14 @@ require(path.join(__dirname, '../../sender-pc/main.js'));
   const none = await handlers['find-projector']({}, '999999');
   assert.strictEqual(none, null);
   pass('wrong code finds nothing (after timeout)');
+  // The address that worked is remembered and tried first (broadcast replies can be dropped).
+  const fs = require('fs');
+  assert.strictEqual(JSON.parse(fs.readFileSync(settingsFile, 'utf8')).projectors['482193'], found.ip, 'address remembered');
+  fs.writeFileSync(settingsFile, JSON.stringify({ projectors: { 482193: '127.0.0.1' } }));
+  const t0 = Date.now();
+  const direct = await handlers['find-projector']({}, '482193');
+  assert(direct && direct.ip === '127.0.0.1' && Date.now() - t0 < 1000, 'found at the remembered address: ' + JSON.stringify(direct));
+  pass('finds the projector at its last address directly');
 
   const ping = await handlers['ping']({}, '127.0.0.1');
   assert.strictEqual(ping.name, 'Test Projector');

@@ -79,12 +79,26 @@ function createWindow() {
     },
   });
   win.loadFile(path.join(__dirname, 'index.html'));
+  // The preview window opens where it was last closed.
+  win.webContents.on('did-create-window', (child, { frameName }) => {
+    if (frameName !== 'preview') return;
+    child.on('close', () => {
+      const next = readSettings();
+      next.previewBounds = child.getBounds();
+      fs.mkdirSync(path.dirname(settingsFile), { recursive: true });
+      fs.writeFileSync(settingsFile, JSON.stringify(next));
+    });
+  });
   win.webContents.setWindowOpenHandler(({ url, frameName }) => {
     // The preview window: a blank page the app fills with the cast picture.
     if (frameName === 'preview' && url === 'about:blank') {
+      const b = readSettings().previewBounds;
+      const onScreen = b && screen.getAllDisplays().some((d) => b.x >= d.bounds.x && b.y >= d.bounds.y
+        && b.x < d.bounds.x + d.bounds.width && b.y < d.bounds.y + d.bounds.height);
       return {
         action: 'allow',
         overrideBrowserWindowOptions: {
+          ...(onScreen ? b : {}),
           title: 'Projector Cast preview', alwaysOnTop: true, autoHideMenuBar: true, backgroundColor: '#000000',
           minWidth: 240, minHeight: 135, webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false },
         },
@@ -174,6 +188,7 @@ ipcMain.handle('list-screens', async () => {
         kind: isScreen ? 'screen' : 'window',
         name: s.name,
         thumb: s.thumbnail.toDataURL(),
+        display: s.display_id || null,
         icon: s.appIcon && !s.appIcon.isEmpty() ? s.appIcon.resize({ width: 32 }).toDataURL() : null,
         ...info,
       };
@@ -337,17 +352,41 @@ public static class Keys {
     Press(0x87); // F24: Windows only lets the process that sent the last input change the active window
     SetForegroundWindow(h);
   }
+  [DllImport("user32.dll")] static extern void mouse_event(uint flags, int dx, int dy, int data, UIntPtr extra);
+  [DllImport("user32.dll")] static extern bool GetCursorPos(out Point p);
+  [DllImport("user32.dll")] static extern int GetSystemMetrics(int index);
+  [DllImport("user32.dll")] static extern bool SetProcessDpiAwarenessContext(IntPtr value);
+  [DllImport("user32.dll")] static extern bool SetProcessDPIAware();
+  public struct Point { public int X; public int Y; }
+  static bool dpiSet;
+  // Move to (x, y) in screen pixels as part of the input stream, so clicks land there.
+  static void MoveTo(int x, int y) {
+    int left = GetSystemMetrics(76), top = GetSystemMetrics(77), w = GetSystemMetrics(78), h = GetSystemMetrics(79);
+    mouse_event(0x8000 | 0x4000 | 0x0001, (int)((x - left) * 65535L / Math.Max(1, w - 1)), (int)((y - top) * 65535L / Math.Max(1, h - 1)), 0, UIntPtr.Zero);
+  }
+  // Clicks (button 1 left, 2 right) and/or scrolls at (x, y), then puts the pointer back.
+  public static void Mouse(int x, int y, int button, int wheel) {
+    if (!dpiSet) { dpiSet = true; if (!SetProcessDpiAwarenessContext(new IntPtr(-4))) SetProcessDPIAware(); }
+    Point old;
+    GetCursorPos(out old);
+    MoveTo(x, y);
+    if (button == 1) { mouse_event(0x0002, 0, 0, 0, UIntPtr.Zero); mouse_event(0x0004, 0, 0, 0, UIntPtr.Zero); }
+    if (button == 2) { mouse_event(0x0008, 0, 0, 0, UIntPtr.Zero); mouse_event(0x0010, 0, 0, 0, UIntPtr.Zero); }
+    if (wheel != 0) mouse_event(0x0800, 0, 0, wheel, UIntPtr.Zero);
+    MoveTo(old.X, old.Y);
+  }
 }
 '@
 while (($line = [Console]::In.ReadLine()) -ne $null) {
   $p = $line.Split(' ')
+  if ($p[0] -eq 'm') { [Keys]::Mouse([int]$p[1], [int]$p[2], [int]$p[3], [int]$p[4]); continue }
   if ($p[1] -ne '0') { [Keys]::Focus([long]$p[1]); Start-Sleep -Milliseconds 60 }
   [Keys]::Press([byte]$p[0])
 }`;
 
 let keyHelper = null;
 
-function pressOnWindows(vk, hwnd) {
+function helperLine(line) {
   if (!keyHelper || keyHelper.exitCode !== null) {
     const encoded = Buffer.from(KEY_HELPER, 'utf16le').toString('base64');
     keyHelper = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded],
@@ -355,8 +394,22 @@ function pressOnWindows(vk, hwnd) {
     keyHelper.on('error', () => { keyHelper = null; });
     keyHelper.stdin.on('error', () => { /* helper exited */ });
   }
-  keyHelper.stdin.write(`${vk} ${hwnd}\r\n`);
+  keyHelper.stdin.write(`${line}\r\n`);
 }
+
+function pressOnWindows(vk, hwnd) { helperLine(`${vk} ${hwnd}`); }
+
+let chosenDisplayId = null;
+
+/** A click or scroll in the preview window, at (x, y) as fractions of the picture: done on the cast screen. */
+ipcMain.handle('preview-input', (_e, { x, y, button, wheel }) => {
+  if (process.platform !== 'win32' || !String(chosenScreenId || '').startsWith('screen:')) return false;
+  const d = screen.getAllDisplays().find((s) => String(s.id) === String(chosenDisplayId));
+  if (!d || !(x >= 0 && x <= 1 && y >= 0 && y <= 1)) return false;
+  const p = screen.dipToScreenPoint({ x: d.bounds.x + x * d.bounds.width, y: d.bounds.y + y * d.bounds.height });
+  helperLine(`m ${Math.round(p.x)} ${Math.round(p.y)} ${button === 2 ? 2 : button === 1 ? 1 : 0} ${Math.round(wheel) || 0}`);
+  return true;
+});
 
 /** Window handle of the cast window ("window:<hwnd>:0"), or 0 for a whole screen. */
 function castWindowHandle() {
@@ -393,26 +446,11 @@ function appAudioSupported() {
 
 ipcMain.handle('app-audio-supported', () => appAudioSupported());
 
-/** Running apps that have a window, one entry per app name. */
-ipcMain.handle('list-audio-apps', async () => {
-  if (!appAudioSupported()) return [];
-  const out = await powershell('Get-Process | Where-Object { $_.MainWindowHandle -ne 0 } | '
-    + 'Select-Object Id, ProcessName, Description | ConvertTo-Json -Compress');
-  let list = [];
-  try { list = [].concat(JSON.parse(out || '[]')); } catch (_) { return []; }
-  const seen = new Set();
-  return list
-    .map((p) => ({ pid: p.Id, name: (p.Description || p.ProcessName || '').trim() }))
-    .filter((p) => p.name && !/^(ProjectorCast|Projector Cast|electron)$/i.test(p.name) && p.pid !== process.pid)
-    .filter((p) => !seen.has(p.name.toLowerCase()) && seen.add(p.name.toLowerCase()))
-    .sort((a, b) => a.name.localeCompare(b.name));
-});
-
 // Full-line comments and indentation are dropped to stay within the command-line length limit.
-function appAudioScript(pid, mute) {
+function appAudioScript(windowHandle, mute) {
   const src = fs.readFileSync(path.join(__dirname, 'app-audio.ps1'), 'utf8')
     .split(/\r?\n/).map((l) => l.trim()).filter((l) => l && !/^(#|\/\/)/.test(l)).join('\r\n');
-  return `$TargetPid = ${Number(pid)}; $Mute = $${mute ? 'true' : 'false'}\r\n${src}`;
+  return `$TargetWindow = ${Number(windowHandle)}; $Mute = $${mute ? 'true' : 'false'}\r\n${src}`;
 }
 
 function stopAppAudio() {
@@ -425,10 +463,12 @@ function stopAppAudio() {
   setTimeout(() => { if (a.proc.exitCode === null) a.proc.kill(); }, 4000);
 }
 
-/** Starts capturing; the PCM goes to the window as 'app-audio' messages. */
-ipcMain.handle('app-audio-start', (_e, { pid, mute }) => new Promise((resolve, reject) => {
+/** Starts capturing the app that owns this window ("window:<handle>:0"); PCM goes out as 'app-audio' messages. */
+ipcMain.handle('app-audio-start', (_e, { windowId, mute }) => new Promise((resolve, reject) => {
   stopAppAudio();
-  const encoded = Buffer.from(appAudioScript(pid, mute), 'utf16le').toString('base64');
+  const handle = /^window:(\d+):/.exec(String(windowId));
+  if (!handle) return reject(new Error('not a window'));
+  const encoded = Buffer.from(appAudioScript(handle[1], mute), 'utf16le').toString('base64');
   const proc = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Mta', '-EncodedCommand', encoded],
     { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
   const a = { proc, stopping: false };
@@ -493,6 +533,7 @@ ipcMain.handle('push-update', async (_e, { ip, code }) => {
 ipcMain.handle('prepare-capture', (_e, opts) => {
   chosenScreenId = opts.screenId || null;
   chosenName = opts.screenName || null;
+  chosenDisplayId = opts.displayId || null;
   wantAudio = !!opts.audio;
   muteLocal = opts.muteLocal !== false;
   return { audioSupported: process.platform === 'win32' };
@@ -523,7 +564,55 @@ function broadcastAddresses() {
   return [...out];
 }
 
-ipcMain.handle('find-projector', (_e, code) => new Promise((resolve) => {
+/**
+ * Finds the projector with this code: at its last known address, by broadcast, then by asking every
+ * address on the local network directly. Broadcast replies are sometimes dropped (Windows Firewall,
+ * Wi-Fi routers), direct connections are not.
+ */
+ipcMain.handle('find-projector', async (_e, code) => {
+  const known = (readSettings().projectors || {})[code];
+  const found = (known && await checkProjector(known, code, 1500))
+    || await broadcastFind(code)
+    || await scanNetwork(code);
+  if (found) {
+    const next = readSettings();
+    next.projectors = { ...(next.projectors || {}), [code]: found.ip };
+    fs.mkdirSync(path.dirname(settingsFile), { recursive: true });
+    fs.writeFileSync(settingsFile, JSON.stringify(next));
+  }
+  return found;
+});
+
+function checkProjector(ip, code, timeout) {
+  return request(ip, 'GET', '/check', code, null, timeout).then((r) => ({ ip, name: r.name || 'Projector' }), () => null);
+}
+
+/** Every address of the PC's IPv4 networks (up to /22), asked 64 at a time. */
+async function scanNetwork(code) {
+  const hosts = [];
+  for (const list of Object.values(os.networkInterfaces())) {
+    for (const a of list || []) {
+      if ((a.family !== 'IPv4' && a.family !== 4) || a.internal || !a.netmask) continue;
+      const toInt = (x) => x.split('.').reduce((n, o) => n * 256 + Number(o), 0);
+      const ip = toInt(a.address);
+      const mask = toInt(a.netmask);
+      const size = 2 ** 32 - mask;
+      if (size > 1024 || size < 4) continue;
+      const base = ip - (ip % size);
+      for (let h = base + 1; h < base + size - 1; h++) {
+        if (h !== ip) hosts.push([24, 16, 8, 0].map((sh) => Math.floor(h / 2 ** sh) % 256).join('.'));
+      }
+    }
+  }
+  for (let i = 0; i < hosts.length; i += 64) {
+    const results = await Promise.all(hosts.slice(i, i + 64).map((h) => checkProjector(h, code, 800)));
+    const hit = results.find(Boolean);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+const broadcastFind = (code) => new Promise((resolve) => {
   const sock = dgram.createSocket({ type: 'udp4', reuseAddr: true });
   const msg = Buffer.from('PCAST?' + code);
   const targets = broadcastAddresses();
@@ -548,9 +637,9 @@ ipcMain.handle('find-projector', (_e, code) => new Promise((resolve) => {
     const send = () => targets.forEach((t) => sock.send(msg, DISCOVERY_PORT, t, () => {}));
     send();
     resend = setInterval(send, 500);
-    timer = setTimeout(() => finish(null), 4000);
+    timer = setTimeout(() => finish(null), 3000);
   });
-}));
+});
 
 function request(ip, method, urlPath, code, body, timeoutMs, contentType) {
   return new Promise((resolve, reject) => {

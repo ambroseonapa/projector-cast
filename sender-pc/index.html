@@ -30,12 +30,8 @@
 
     <label class="check"><input type="checkbox" id="audio" checked> Send sound</label>
     <div id="appSound" hidden>
-      <label for="soundFrom">Sound from</label>
-      <select id="soundFrom">
-        <option value="pc">Whole PC</option>
-        <option value="app">One app</option>
-      </select>
-      <select id="soundApp" hidden></select>
+      <label>Sound from</label>
+      <div id="soundPicker" class="picker"></div>
     </div>
     <label class="check"><input type="checkbox" id="muteLocal" checked> <span id="muteLabel">Mute this PC while casting</span></label>
     <p class="note" id="audioNote" hidden>Sound is available on Windows only.</p>
@@ -97,6 +93,10 @@
       <summary>Settings</summary>
       <label>Source</label>
       <div id="livePicker" class="picker"></div>
+      <div id="liveSound" hidden>
+        <label>Sound from</label>
+        <div id="liveSoundPicker" class="picker"></div>
+      </div>
       <label for="liveQuality">Quality</label>
       <select id="liveQuality"></select>
       <label for="liveContent">Content</label>

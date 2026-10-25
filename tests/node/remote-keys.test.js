@@ -10,7 +10,12 @@ const fakeElectron = {
   app: { whenReady: () => new Promise(() => {}), on() {}, commandLine: { appendSwitch() {} }, getPath: () => require('os').tmpdir(), isPackaged: false },
   BrowserWindow: function () {},
   ipcMain: { handle: (name, fn) => { handlers[name] = fn; } },
-  desktopCapturer: {}, session: {}, clipboard: {}, screen: { getAllDisplays: () => [] },
+  desktopCapturer: {}, session: {}, clipboard: {},
+  // A second screen to the right of a 1920-wide main screen, at 150 % scaling.
+  screen: {
+    getAllDisplays: () => [{ id: 2, bounds: { x: 1280, y: 0, width: 1280, height: 720 } }],
+    dipToScreenPoint: (p) => ({ x: p.x * 1.5, y: p.y * 1.5 }),
+  },
   shell: { openExternal() {} },
   powerSaveBlocker: { start: () => 1, stop: () => {} },
 };
@@ -62,6 +67,15 @@ require(path.join(__dirname, '../../sender-pc/main.js'));
   assert.strictEqual(spawned.length, 2, 'helper restarted after it exits');
   assert.deepStrictEqual(spawned[1].p.lines, ['177 0']);
   console.log('PASS helper restarts if it exits');
+  // Preview window: a click at the middle of the picture lands in the middle of the cast screen.
+  await handlers['prepare-capture']({}, { screenId: 'screen:2:0', displayId: '2', audio: true });
+  assert.strictEqual(await handlers['preview-input']({}, { x: 0.5, y: 0.5, button: 1, wheel: 0 }), true);
+  await handlers['preview-input']({}, { x: 0.25, y: 1, button: 0, wheel: -240 });
+  assert.strictEqual(await handlers['preview-input']({}, { x: 1.5, y: 0.5, button: 1, wheel: 0 }), false, 'outside the picture');
+  assert.deepStrictEqual(spawned[1].p.lines.slice(-2), ['m 2880 540 1 0', 'm 2400 1080 0 -240']);
+  await handlers['prepare-capture']({}, { screenId: 'window:526312:0', audio: true });
+  assert.strictEqual(await handlers['preview-input']({}, { x: 0.5, y: 0.5, button: 1, wheel: 0 }), false, 'windows: not supported');
+  console.log('PASS preview clicks and scrolling land on the cast screen (DPI-scaled)');
   console.log('ALL REMOTE KEY TESTS PASSED');
   process.exit(0);
 })().catch((e) => { console.error('FAIL', e); process.exit(1); });

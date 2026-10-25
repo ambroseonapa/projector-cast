@@ -43,31 +43,25 @@ const tick = (ms = 20) => new Promise((r) => setTimeout(r, ms));
 
 (async () => {
   assert.strictEqual(await handlers['app-audio-supported'](), true);
-  psOut = JSON.stringify([{ Id: 10, ProcessName: 'msedge', Description: 'Microsoft Edge' }, { Id: 11, ProcessName: 'msedge', Description: 'Microsoft Edge' },
-    { Id: 12, ProcessName: 'zoom', Description: 'Zoom Meetings' }, { Id: 13, ProcessName: 'ProjectorCast', Description: 'Projector Cast' }]);
-  assert.deepStrictEqual(await handlers['list-audio-apps'](), [{ pid: 10, name: 'Microsoft Edge' }, { pid: 12, name: 'Zoom Meetings' }]);
-  psOut = '{"Id":20,"ProcessName":"vlc","Description":"VLC media player"}'; // one result comes back as an object
-  assert.deepStrictEqual(await handlers['list-audio-apps'](), [{ pid: 20, name: 'VLC media player' }]);
-  console.log('PASS app list: one entry per app, without Projector Cast');
-
-  const started = handlers['app-audio-start']({}, { pid: 4242, mute: true });
+  await assert.rejects(handlers['app-audio-start']({}, { windowId: 'screen:0:0', mute: false }), /not a window/);
+  const started = handlers['app-audio-start']({}, { windowId: 'window:4242:0', mute: true });
   await tick();
   const { args, p } = spawned[0];
   assert(args.includes('-Mta'), 'COM callbacks need a multithreaded apartment');
   const script = Buffer.from(args[args.indexOf('-EncodedCommand') + 1], 'base64').toString('utf16le');
-  assert(script.startsWith('$TargetPid = 4242; $Mute = $true\r\n'), script.slice(0, 60));
-  assert(/VAD\\\\Process_Loopback/.test(script) && /SetMute/.test(script) && !/^\s*#/m.test(script), 'helper script, compacted');
+  assert(script.startsWith('$TargetWindow = 4242; $Mute = $true\r\n'), script.slice(0, 60));
+  assert(/VAD\\\\Process_Loopback/.test(script) && /PidOfWindow/.test(script) && /SetMute/.test(script) && !/^\s*#/m.test(script), 'helper script, compacted');
   assert(args.join(' ').length < 32000, 'fits the command-line limit: ' + args.join(' ').length);
   p.stdout.write(Buffer.from([1, 2, 3, 4, 5, 6])); // first sound: counts as started
   await started;
-  console.log('PASS helper starts with the app, mute flag and Process_Loopback capture');
+  console.log('PASS helper starts for the window\'s app, with mute flag and Process_Loopback capture');
 
   handlers['app-audio-stop']();
   await tick();
   assert.strictEqual(p.input, 'stop\r\n', 'stop is sent so the helper unmutes the app');
   console.log('PASS stop asks the helper to unmute and exit');
 
-  const failing = handlers['app-audio-start']({}, { pid: 1, mute: false });
+  const failing = handlers['app-audio-start']({}, { windowId: 'window:1:0', mute: false });
   await tick();
   const f = spawned[1].p;
   f.stderr.write('Windows could not capture this app (0x80070057)\r\n');

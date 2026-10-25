@@ -26,9 +26,9 @@ contextBridge.exposeInMainWorld('cast', {
   vddSet: (on) => ipcRenderer.invoke('vdd-set', on),
   openDisplaySettings: () => ipcRenderer.invoke('open-display-settings'),
   remoteKey: (key) => ipcRenderer.invoke('remote-key', key),
+  previewInput: (input) => ipcRenderer.invoke('preview-input', input),
   appAudioSupported: () => ipcRenderer.invoke('app-audio-supported'),
-  listAudioApps: () => ipcRenderer.invoke('list-audio-apps'),
-  appAudioStart: (pid, mute) => ipcRenderer.invoke('app-audio-start', { pid, mute }),
+  appAudioStart: (windowId, mute) => ipcRenderer.invoke('app-audio-start', { windowId, mute }),
   appAudioStop: () => ipcRenderer.invoke('app-audio-stop'),
   onAppAudio: (cb) => {
     const h = (_e, data) => cb(data);

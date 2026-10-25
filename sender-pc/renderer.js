@@ -96,7 +96,7 @@ async function copyReport() {
     `Projector Cast report  ${new Date().toISOString()}`,
     `PC app ${info.version || '?'}  ·  ${info.os || '?'}`,
     `Settings: quality ${$('quality').value} · content ${$('content').value} · codec ${$('codec').value} · buffer ${$('buffer').value} ms`
-      + ` · capture ${$('capture').value} · source ${s ? s.kind + ' "' + s.name + '"' : '?'} · sound ${!$('audio').checked ? 'off' : !$('appSound').hidden && $('soundFrom').value === 'app' ? 'app "' + ($('soundApp').selectedOptions[0] || {}).textContent + '"' : 'on'}`,
+      + ` · capture ${$('capture').value} · source ${s ? s.kind + ' "' + s.name + '"' : '?'} · sound ${!$('audio').checked ? 'off' : $('appSound').hidden ? 'on' : soundLabel(soundChoice)}`,
     `Projector: app ${p.app || '?'} · ${p.device || '?'} · Android ${p.android || '?'} · ${p.webview || '?'}`,
     `Projector mode: ${p.mode || '?'} · decoding: ${p.decoding || '?'} · ${p.casting || '?'}`,
     '',
@@ -220,6 +220,10 @@ function renderPicker(box, onPick) {
 function renderAllPickers() {
   renderPicker($('picker'));
   renderPicker($('livePicker'), (s) => { if (session) switchSource(s); });
+  if (!$('appSound').hidden) {
+    renderSoundPicker($('soundPicker'));
+    renderSoundPicker($('liveSoundPicker'), switchSound);
+  }
 }
 
 async function loadScreens() {
@@ -236,9 +240,10 @@ function describe(s) { return s.kind === 'window' && s.app !== 'Other' ? `${s.ap
 async function switchSource(s) {
   showError('');
   try {
-    await window.cast.prepareCapture({ screenId: s.id, screenName: s.name, audio: false, muteLocal: $('muteLocal').checked });
+    await window.cast.prepareCapture({ screenId: s.id, screenName: s.name, displayId: s.display, audio: false, muteLocal: $('muteLocal').checked });
     await session.switchSource();
     $('castingWhat').textContent = describe(s);
+    if (appAudio && soundChoice === 'same' && s.kind === 'window') await switchSound('same');
   } catch (e) {
     showError(cleanError(e));
   }
@@ -324,47 +329,143 @@ async function vddAction(button, work, busyText) {
 
 // ---- Sound of one app (Windows) ----
 
+// 'pc' (whole PC), 'same' (the app shown in the picture) or 'app:<name>'.
+let soundChoice = 'same';
 let appAudio = null;
 
-async function refreshAudioApps() {
-  const sel = $('soundApp');
-  const keep = sel.selectedOptions[0] ? sel.selectedOptions[0].textContent : store('soundApp');
-  const apps = await window.cast.listAudioApps().catch(() => []);
-  sel.replaceChildren(...apps.map((a) => new Option(a.name, String(a.pid))));
-  if (!apps.length) sel.append(new Option('No apps open', ''));
-  const match = apps.find((a) => a.name === keep);
-  if (match) sel.value = String(match.pid);
+const appName = (s) => (s.app && s.app !== 'Other' ? s.app : s.title);
+
+/** One window per open app, used for the sound picker. */
+function soundApps() {
+  const byName = new Map();
+  for (const s of sources) if (s.kind === 'window' && !byName.has(appName(s))) byName.set(appName(s), s);
+  return [...byName.values()].sort((a, b) => appName(a).localeCompare(appName(b)));
+}
+
+/** The window whose app's sound is sent; null for the whole PC; undefined if not available. */
+function soundWindow(choice, picture) {
+  if (choice === 'pc') return null;
+  if (choice === 'same') return picture && picture.kind === 'window' ? picture : undefined;
+  return sources.find((s) => s.kind === 'window' && appName(s) === choice.slice(4));
+}
+
+function soundLabel(choice) {
+  return choice === 'pc' ? 'Whole PC' : choice === 'same' ? 'Same app as the picture' : choice.slice(4);
+}
+
+function renderSoundPicker(box, onPick) {
+  const wasOpen = !!(box.querySelector('details') || {}).open;
+  box.textContent = '';
+  const w = soundWindow(soundChoice, selectedSource());
+  const details = el('details');
+  details.open = wasOpen;
+  const summary = el('summary');
+  const thumb = el('img');
+  thumb.alt = '';
+  if (w) thumb.src = w.thumb;
+  else thumb.hidden = true;
+  const name = el('span', 'name');
+  name.append(el('b', null, soundLabel(soundChoice)));
+  const sub = el('small');
+  if (soundChoice === 'same') sub.textContent = w ? appName(w) : 'The picture is a whole screen: choose an app';
+  else if (soundChoice !== 'pc' && !w) sub.textContent = 'Not open';
+  else if (w) sub.append(icon(w.icon), document.createTextNode('Only this app'));
+  else sub.textContent = 'Everything you hear on this PC';
+  name.append(sub);
+  summary.append(thumb, name, el('span', 'chev', '▼'));
+  details.append(summary);
+
+  const body = el('div', 'body');
+  const grid = el('div', 'pick-grid');
+  const card = (choice, title, src, iconSrc) => {
+    const c = el('button', 'pick-card' + (choice === soundChoice ? ' selected' : ''));
+    c.type = 'button';
+    c.dataset.choice = choice;
+    const t = el('img');
+    t.alt = '';
+    if (src) t.src = src;
+    else t.className = 'blank';
+    const label = el('span', 'title');
+    if (iconSrc) label.append(icon(iconSrc), document.createTextNode(' '));
+    label.append(document.createTextNode(title));
+    c.append(t, label);
+    c.addEventListener('click', () => {
+      soundChoice = choice;
+      store('soundChoice', choice);
+      box.querySelector('details').open = false;
+      renderAllPickers();
+      updateSoundUi();
+      if (onPick) onPick(choice);
+    });
+    grid.append(c);
+  };
+  card('pc', 'Whole PC');
+  const pic = selectedSource();
+  card('same', 'Same app as the picture', pic && pic.kind === 'window' ? pic.thumb : null);
+  for (const a of soundApps()) card('app:' + appName(a), appName(a), a.thumb, a.icon);
+  body.append(grid);
+  details.append(body);
+  box.append(details);
 }
 
 function updateSoundUi() {
-  const app = $('audio').checked && $('soundFrom').value === 'app';
-  $('soundFrom').disabled = !$('audio').checked;
-  $('soundApp').hidden = !app;
+  const app = $('audio').checked && !$('appSound').hidden && soundChoice !== 'pc';
   $('muteLabel').textContent = app ? 'Mute this app on the PC while casting' : 'Mute this PC while casting';
-  if (app) refreshAudioApps();
+  $('liveSound').hidden = $('appSound').hidden || !$('audio').checked;
 }
 
-/** Starts the helper and returns an audio track playing its PCM. */
-async function startAppAudio(pid, mute) {
-  stopAppAudio();
-  const ctx = new AudioContext({ sampleRate: 48000 });
-  await ctx.audioWorklet.addModule('app-audio-worklet.js');
-  await ctx.resume();
-  const node = new AudioWorkletNode(ctx, 'pcm-player', { numberOfInputs: 0, outputChannelCount: [2] });
-  const dest = ctx.createMediaStreamDestination();
-  dest.channelCount = 2;
-  node.connect(dest);
-  const off = window.cast.onAppAudio((data) => node.port.postMessage(data));
-  appAudio = { ctx, off };
+/** While casting: send another app's sound (or the whole PC's) without reconnecting. */
+async function switchSound(choice) {
+  if (!session) return;
+  showError('');
   try {
-    await window.cast.appAudioStart(pid, mute);
+    const w = soundWindow(choice, selectedSource());
+    if (w === undefined) throw new Error(choice === 'same' ? 'The picture is a whole screen: choose which app to hear.' : 'That app is not open.');
+    if (w === null) {
+      if (!appAudio) return;
+      // Back to the whole PC's sound: capture it again, keep only the sound.
+      const s = selectedSource();
+      await window.cast.prepareCapture({ screenId: s.id, screenName: s.name, displayId: s.display, audio: true, muteLocal: $('muteLocal').checked });
+      const fresh = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
+      fresh.getVideoTracks().forEach((t) => t.stop());
+      const t = fresh.getAudioTracks()[0];
+      if (!t) throw new Error('Could not capture the PC sound.');
+      await session.setAudioTrack(t);
+      stopAppAudio();
+      return;
+    }
+    const wasApp = !!appAudio;
+    const track = await startAppAudio(w.id, $('muteLocal').checked);
+    if (!wasApp) await session.setAudioTrack(track);
   } catch (e) {
-    stopAppAudio();
+    showError(cleanError(e));
+  }
+}
+
+/**
+ * Starts the helper for the app that owns this window and returns the audio track playing its sound.
+ * While already running, only the app changes; the track stays the same.
+ */
+async function startAppAudio(windowId, mute) {
+  if (!appAudio) {
+    const ctx = new AudioContext({ sampleRate: 48000 });
+    await ctx.audioWorklet.addModule('app-audio-worklet.js');
+    await ctx.resume();
+    const node = new AudioWorkletNode(ctx, 'pcm-player', { numberOfInputs: 0, outputChannelCount: [2] });
+    const dest = ctx.createMediaStreamDestination();
+    dest.channelCount = 2;
+    node.connect(dest);
+    const track = dest.stream.getAudioTracks()[0];
+    if ('contentHint' in track) track.contentHint = 'music';
+    appAudio = { ctx, track, off: window.cast.onAppAudio((data) => node.port.postMessage(data)) };
+  }
+  try {
+    await window.cast.appAudioStart(windowId, mute);
+  } catch (e) {
+    if (!session) stopAppAudio();
     throw new Error(`Could not capture the app's sound: ${cleanError(e)}`);
   }
-  const track = dest.stream.getAudioTracks()[0];
-  if ('contentHint' in track) track.contentHint = 'music';
-  return track;
+  return appAudio.track;
 }
 
 function stopAppAudio() {
@@ -378,6 +479,7 @@ function stopAppAudio() {
 // ---- Preview window: what is cast, without the projector's delay (useful for a second screen) ----
 
 let previewWin = null;
+let platformName = '';
 
 function openPreviewWindow() {
   if (previewWin && !previewWin.closed) return previewWin.focus();
@@ -385,13 +487,62 @@ function openPreviewWindow() {
   if (!previewWin) return;
   const doc = previewWin.document;
   doc.title = 'Projector Cast preview';
-  Object.assign(doc.body.style, { margin: '0', background: '#000', overflow: 'hidden' });
+  Object.assign(doc.body.style, { margin: '0', background: '#000', overflow: 'hidden', font: '13px "Segoe UI", system-ui, sans-serif' });
   const v = doc.createElement('video');
   v.muted = true;
   v.autoplay = true;
   Object.assign(v.style, { width: '100vw', height: '100vh', objectFit: 'contain', display: 'block' });
-  doc.body.append(v);
+  const hint = doc.createElement('div');
+  Object.assign(hint.style, { position: 'fixed', left: '8px', bottom: '8px', padding: '4px 8px', borderRadius: '6px',
+    background: 'rgba(0,0,0,.65)', color: '#cfe6ff', pointerEvents: 'none', transition: 'opacity .5s' });
+  doc.body.append(v, hint);
+  controlFromPreview(v, hint);
   showInPreviewWindow();
+}
+
+/**
+ * Casting a whole screen (e.g. the second screen) on Windows: clicks and scrolling in the preview are
+ * done on that screen, and the pointer comes straight back.
+ */
+function controlFromPreview(v, hint) {
+  const where = (e) => {
+    // The picture is letterboxed inside the window (object-fit: contain).
+    const r = v.getBoundingClientRect();
+    const scale = Math.min(r.width / (v.videoWidth || 1), r.height / (v.videoHeight || 1));
+    const w = v.videoWidth * scale, h = v.videoHeight * scale;
+    return { x: (e.clientX - r.left - (r.width - w) / 2) / w, y: (e.clientY - r.top - (r.height - h) / 2) / h };
+  };
+  const send = async (e, button, wheel) => {
+    const p = where(e);
+    if (!(p.x >= 0 && p.x <= 1 && p.y >= 0 && p.y <= 1)) return;
+    await window.cast.previewInput({ ...p, button, wheel }).catch(() => false);
+  };
+  v.addEventListener('click', (e) => send(e, 1, 0));
+  v.addEventListener('contextmenu', (e) => { e.preventDefault(); send(e, 2, 0); });
+  let pending = 0;
+  let last = null;
+  v.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    // One notch is 120; trackpads send many small steps, so they are added up per frame.
+    pending += -e.deltaY * (e.deltaMode === 1 ? 40 : 1.2);
+    last = e;
+    if (pending && !v.wheelQueued) {
+      v.wheelQueued = true;
+      v.ownerDocument.defaultView.requestAnimationFrame(() => {
+        v.wheelQueued = false;
+        const amount = Math.round(pending);
+        pending = 0;
+        if (amount) send(last, 0, amount);
+      });
+    }
+  }, { passive: false });
+  const s = selectedSource();
+  if (platformName === 'win32' && s && s.kind === 'screen') {
+    hint.textContent = 'Click or scroll here to use the cast screen';
+    setTimeout(() => { hint.style.opacity = '0'; }, 6000);
+  } else {
+    hint.hidden = true;
+  }
 }
 
 function showInPreviewWindow() {
@@ -425,6 +576,7 @@ async function init() {
   });
 
   const platform = await window.cast.platform();
+  platformName = platform;
   if (platform === 'darwin') $('macNote').hidden = false;
   if (platform !== 'win32') {
     $('audioNote').hidden = false;
@@ -436,9 +588,7 @@ async function init() {
 
   if (await window.cast.appAudioSupported()) {
     $('appSound').hidden = false;
-    $('soundFrom').value = store('soundFrom') === 'app' ? 'app' : 'pc';
-    $('soundFrom').addEventListener('change', () => { store('soundFrom', $('soundFrom').value); updateSoundUi(); });
-    $('soundApp').addEventListener('change', () => store('soundApp', $('soundApp').selectedOptions[0].textContent));
+    soundChoice = store('soundChoice') || 'same';
     $('audio').addEventListener('change', updateSoundUi);
     window.cast.onAppAudioEnded((why) => {
       $('liveHint').textContent = `The app's sound stopped (${why}). Start casting again to send it.`;
@@ -515,16 +665,19 @@ async function start() {
     }
 
     // One app's sound: captured by the helper instead of the system sound.
-    const appMode = $('audio').checked && !$('appSound').hidden && $('soundFrom').value === 'app';
+    const appMode = $('audio').checked && !$('appSound').hidden && soundChoice !== 'pc';
     let extraAudio = null;
     if (appMode) {
-      await refreshAudioApps();
-      const pid = parseInt($('soundApp').value, 10);
-      if (!pid) throw new Error('Choose the app whose sound to send (open it first).');
-      extraAudio = await startAppAudio(pid, $('muteLocal').checked);
+      const w = soundWindow(soundChoice, source);
+      if (!w) {
+        throw new Error(soundChoice === 'same'
+          ? 'The picture is a whole screen: under Sound from, choose which app to hear.'
+          : `${soundLabel(soundChoice)} is not open. Choose another app under Sound from.`);
+      }
+      extraAudio = await startAppAudio(w.id, $('muteLocal').checked);
     }
     await window.cast.prepareCapture({
-      screenId: source.id, screenName: source.name, audio: $('audio').checked && !appMode, muteLocal: $('muteLocal').checked,
+      screenId: source.id, screenName: source.name, displayId: source.display, audio: $('audio').checked && !appMode, muteLocal: $('muteLocal').checked,
     });
     const opts = {
       ip: target.ip,

@@ -22,6 +22,7 @@ import java.util.Map;
  * UDP  {@link #DISCOVERY_PORT}: "PCAST?<code>" -> "PCAST!<name>" (only when the code matches)
  * HTTP {@link #HTTP_PORT}:
  *   GET  /ping                -> {"ok":true,"name":...}
+ *   GET  /check               -> same, if the code is right (used to find the projector directly)
  *   POST /offer  (X-Cast-Code) body = SDP offer JSON -> SDP answer JSON
  *   POST /stop   (X-Cast-Code) -> {"ok":true}
  *   POST /update (X-Cast-Code) body = new APK -> {"ok":true}; Android then asks to install it
@@ -152,6 +153,11 @@ public class CastServer {
 
             if (method.equals("OPTIONS")) { respond(out, 204, ""); return; }
             if (method.equals("GET") && path.equals("/ping")) {
+                respond(out, 200, "{\"ok\":true,\"name\":" + quote(name) + ",\"version\":" + version + "}");
+                return;
+            }
+            if (method.equals("GET") && path.equals("/check")) {
+                if (!codeAccepted(headers.get("x-cast-code"))) { respond(out, 403, "{\"error\":\"wrong code\"}"); return; }
                 respond(out, 200, "{\"ok\":true,\"name\":" + quote(name) + ",\"version\":" + version + "}");
                 return;
             }

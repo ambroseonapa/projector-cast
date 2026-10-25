@@ -1,7 +1,7 @@
 # Captures the sound of one process tree (Windows process loopback, build 20348 or later) and writes
 # it to stdout as 48 kHz stereo 16-bit PCM. With $Mute, that app is also muted on this PC while
 # casting; it is unmuted when stdin closes or receives "stop".
-# main.js puts "$TargetPid = <pid>; $Mute = <bool>" in front of this script.
+# main.js puts "$TargetWindow = <window handle>; $Mute = <bool>" in front of this script.
 
 $ErrorActionPreference = 'Stop'
 
@@ -113,6 +113,30 @@ public static class AppAudio {
     [DllImport("Mmdevapi.dll", ExactSpelling = true, PreserveSig = false)]
     static extern void ActivateAudioInterfaceAsync([MarshalAs(UnmanagedType.LPWStr)] string path, ref Guid iid,
         IntPtr parameters, IActivateAudioInterfaceCompletionHandler handler, out IActivateAudioInterfaceAsyncOperation op);
+
+    [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr window, out uint pid);
+    delegate bool EnumProc(IntPtr window, IntPtr param);
+    [DllImport("user32.dll")] static extern bool EnumChildWindows(IntPtr parent, EnumProc callback, IntPtr param);
+
+    /// The process that plays the sound of this window (0 if the window is gone).
+    public static uint PidOfWindow(long handle) {
+        IntPtr window = new IntPtr(handle);
+        uint pid;
+        GetWindowThreadProcessId(window, out pid);
+        if (pid == 0) return 0;
+        string name = "";
+        try { name = System.Diagnostics.Process.GetProcessById((int)pid).ProcessName; } catch (Exception) { }
+        if (!name.Equals("ApplicationFrameHost", StringComparison.OrdinalIgnoreCase)) return pid;
+        // Store apps: the frame belongs to ApplicationFrameHost, the app itself owns a child window.
+        uint frame = pid, app = pid;
+        EnumChildWindows(window, delegate (IntPtr child, IntPtr param) {
+            uint p;
+            GetWindowThreadProcessId(child, out p);
+            if (p != 0 && p != frame) { app = p; return false; }
+            return true;
+        }, IntPtr.Zero);
+        return app;
+    }
 
     static volatile bool stopping;
     static Thread captureThread;
@@ -258,6 +282,8 @@ function Get-Tree([uint32]$root) {
   ,$tree
 }
 
+$TargetPid = [ProjectorCast.AppAudio]::PidOfWindow([long]$TargetWindow)
+if ($TargetPid -eq 0) { [Console]::Error.WriteLine('the window was closed'); exit 1 }
 [ProjectorCast.AppAudio]::Start([uint32]$TargetPid)
 try {
   while (-not [ProjectorCast.AppAudio]::Finished) {

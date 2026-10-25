@@ -45,6 +45,9 @@ jobs:
           $env:PCAST_COMPILE_ONLY = '1'
           powershell -NoProfile -ExecutionPolicy Bypass -File sender-pc/app-audio.ps1
           if ($LASTEXITCODE -ne 0) { exit 1 }
+          node -e "const m=/const KEY_HELPER = ``([\s\S]*?)``;/.exec(require('fs').readFileSync('sender-pc/main.js','utf8')); require('fs').writeFileSync('key-helper.ps1', m[1])"
+          '' | powershell -NoProfile -ExecutionPolicy Bypass -File key-helper.ps1
+          if ($LASTEXITCODE -ne 0) { exit 1 }
       - name: Build Windows installer
         working-directory: sender-pc
         run: |
