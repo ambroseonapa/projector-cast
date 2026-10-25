@@ -5,3 +5,4 @@ tests/jvm/out/
 tests/webrtc/out-*.png
 receiver-android/.cache/
 *.keystore
+undefined*

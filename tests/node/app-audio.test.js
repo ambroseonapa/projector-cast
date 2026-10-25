@@ -33,6 +33,8 @@ const fakeChild = {
     return p;
   },
 };
+// Windows reads the temporary folder from TEMP: keep it a real folder while pretending to be Windows.
+process.env.TEMP = require('os').tmpdir();
 Object.defineProperty(process, 'platform', { value: 'win32' });
 const realOs = require('os');
 const realLoad = Module._load;
