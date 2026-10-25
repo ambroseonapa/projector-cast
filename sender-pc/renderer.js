@@ -296,7 +296,7 @@ async function refreshVdd() {
   $('vdd').hidden = !st.supported;
   if (!st.supported) return;
   $('vddStatus').textContent = !st.installed
-    ? 'Adds a virtual monitor that extends the desktop to the projector. Requires administrator rights.'
+    ? 'Adds a virtual monitor that extends the desktop to the projector. Needs administrator rights; Windows asks you to confirm the driver.'
     : st.on ? 'Virtual monitor is on. Select it under Source.' : 'Virtual monitor is off.';
   $('vddInstall').hidden = st.installed;
   $('vddOn').hidden = !st.installed || st.on;
@@ -311,8 +311,7 @@ async function vddAction(button, work, busyText) {
   showError('');
   try {
     const r = await work();
-    if (r && r.manual) showNote('Download the installer from the page that opened.');
-    else if (r && r.ok === false) showError('Installation did not complete.');
+    if (r && r.ok === false) showError(`Installation did not complete: ${r.reason || 'unknown error'}.`);
   } catch (e) {
     showError('The change was cancelled or not permitted.');
   } finally {

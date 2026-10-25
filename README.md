@@ -66,7 +66,7 @@ Windows is fully supported. On Linux, players that support MPRIS are controlled 
 
 ### Second screen (Windows)
 
-**Advanced → Second screen** installs the open-source [Virtual Display Driver](https://github.com/VirtualDrivers/Virtual-Display-Driver) (MIT) through winget. It adds a virtual monitor that extends the desktop; select it under **Source** (listed as *virtual*) and drag windows onto it. **Turn on / Turn off** enable or disable the device, and **Display settings** sets its resolution and position. These actions require administrator rights. If the driver ever causes display problems, uninstall it from Device Manager → Display adapters.
+**Advanced → Second screen** installs the open-source [Virtual Display Driver](https://github.com/VirtualDrivers/Virtual-Display-Driver) (MIT). The app downloads the driver and [nefcon](https://github.com/nefarius/nefcon) (which adds the device) from their GitHub releases, checks them against fixed checksums, and installs them after the administrator prompt; Windows then asks you to confirm the driver. It adds a virtual monitor that extends the desktop; select it under **Source** (listed as *virtual*) and drag windows onto it. **Turn on / Turn off** enable or disable the device, and **Display settings** sets its resolution and position. These actions require administrator rights. If the driver ever causes display problems, uninstall it from Device Manager → Display adapters.
 
 ## Troubleshooting
 

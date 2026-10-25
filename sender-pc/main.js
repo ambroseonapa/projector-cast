@@ -4,6 +4,8 @@ const { app, BrowserWindow, ipcMain, desktopCapturer, session, powerSaveBlocker,
 const { execFile, spawn } = require('child_process');
 const dgram = require('dgram');
 const http = require('http');
+const https = require('https');
+const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -177,9 +179,16 @@ function screenTitle(s, screens, labels) {
 
 // ---- Second screen: Virtual Display Driver (github.com/VirtualDrivers/Virtual-Display-Driver, MIT) ----
 
-const VDD_PACKAGE = 'VirtualDrivers.Virtual-Display-Driver';
+// Release files, pinned by checksum. nefcon (github.com/nefarius/nefcon, BSD-3) adds the virtual device.
+const VDD_FILES = {
+  nefcon: { url: 'https://github.com/nefarius/nefcon/releases/download/v1.14.0/nefcon_v1.14.0.zip',
+    sha256: 'a15557da24a9efca203158de3b43b0eaf982db231f0194031f1ed428bc13e669' },
+  x64: { url: 'https://github.com/VirtualDrivers/Virtual-Display-Driver/releases/download/25.7.23/VirtualDisplayDriver-x86.Driver.Only.zip',
+    sha256: 'e24210692b442b39af763536330ce78b423f19342b7a7792c26de3944e418b3a' },
+  arm64: { url: 'https://github.com/VirtualDrivers/Virtual-Display-Driver/releases/download/25.7.23/VirtualDisplayDriver-ARM64.Driver.Only.zip',
+    sha256: 'dcd487161469c726bab60f174a7e7f70ee02afd437cad0d5c0e6755953de5a25' },
+};
 const VDD_NAMES = ['Virtual Display Driver', 'IddSampleDriver Device HDR', 'VDD by MTT'];
-const VDD_RELEASES = 'https://github.com/VirtualDrivers/Virtual-Display-Driver/releases/latest';
 
 function powershell(script, timeout = 30000) {
   return new Promise((resolve, reject) => {
@@ -208,16 +217,80 @@ ipcMain.handle('vdd-status', async () => {
   }
 });
 
-ipcMain.handle('vdd-install', () => new Promise((resolve) => {
-  execFile('winget', ['install', '--id', VDD_PACKAGE, '-e', '--accept-package-agreements', '--accept-source-agreements'],
-    { windowsHide: true, timeout: 15 * 60 * 1000 }, (err) => {
-      if (err && err.code === 'ENOENT') {
-        shell.openExternal(VDD_RELEASES); // no winget: use the project's installer
-        return resolve({ ok: false, manual: true });
+/** Downloads a file (following redirects) and checks its SHA-256. */
+function download(url, file, sha256, redirects = 5) {
+  return new Promise((resolve, reject) => {
+    https.get(url, { headers: { 'User-Agent': 'ProjectorCast' }, timeout: 60000 }, (res) => {
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location && redirects > 0) {
+        res.resume();
+        return resolve(download(new URL(res.headers.location, url).toString(), file, sha256, redirects - 1));
       }
-      resolve({ ok: !err });
-    });
-}));
+      if (res.statusCode !== 200) {
+        res.resume();
+        return reject(new Error(`download failed (${res.statusCode})`));
+      }
+      const hash = crypto.createHash('sha256');
+      const out = fs.createWriteStream(file);
+      res.on('data', (c) => hash.update(c));
+      res.pipe(out);
+      out.on('finish', () => (hash.digest('hex') === sha256 ? resolve(file) : reject(new Error('downloaded file is damaged'))));
+      out.on('error', reject);
+    }).on('error', (e) => reject(new Error(`no internet connection (${e.code || e.message})`)))
+      .on('timeout', function () { this.destroy(new Error('download timed out')); });
+  });
+}
+
+// Runs elevated: unpacks the verified files and adds the device. Windows asks before installing the driver.
+function vddInstallScript(dir, arch, files) {
+  const q = (p) => `'${p.replace(/'/g, "''")}'`;
+  return `$ErrorActionPreference = 'Stop'
+$log = ${q(path.join(dir, 'result.txt'))}
+try {
+  foreach ($f in @(${files.map((f) => `@(${q(f.file)}, '${f.sha256.toUpperCase()}')`).join(', ')})) {
+    if ((Get-FileHash -Algorithm SHA256 $f[0]).Hash -ne $f[1]) { throw 'downloaded file changed' }
+    Expand-Archive -Path $f[0] -DestinationPath ${q(dir)} -Force
+  }
+  # The driver reads its settings (resolutions, number of monitors) from here.
+  New-Item -ItemType Directory -Path 'C:\\VirtualDisplayDriver' -Force | Out-Null
+  if (-not (Test-Path 'C:\\VirtualDisplayDriver\\vdd_settings.xml')) {
+    Copy-Item ${q(path.join(dir, 'VirtualDisplayDriver', 'vdd_settings.xml'))} 'C:\\VirtualDisplayDriver\\vdd_settings.xml'
+  }
+  # nefconw is a windowed program: PowerShell only waits for it through Start-Process.
+  $inf = '"' + ${q(path.join(dir, 'VirtualDisplayDriver', 'MttVDD.inf'))} + '"'
+  $p = Start-Process -FilePath ${q(path.join(dir, arch === 'arm64' ? 'ARM64' : 'x64', 'nefconw.exe'))} -ArgumentList 'install', $inf, 'Root\\MttVDD' -Wait -PassThru
+  if ($p.ExitCode -ne 0) { throw "driver setup ended with code $($p.ExitCode)" }
+  'ok' | Set-Content $log
+} catch {
+  $_.Exception.Message | Set-Content $log
+  exit 1
+}`;
+}
+
+ipcMain.handle('vdd-install', async () => {
+  const arch = process.arch === 'arm64' ? 'arm64' : 'x64';
+  const dir = path.join(app.getPath('temp'), 'projector-cast-vdd');
+  fs.rmSync(dir, { recursive: true, force: true });
+  fs.mkdirSync(dir, { recursive: true });
+  try {
+    const files = [];
+    for (const key of ['nefcon', arch]) {
+      const f = VDD_FILES[key];
+      files.push({ file: await download(f.url, path.join(dir, `${key}.zip`), f.sha256), sha256: f.sha256 });
+    }
+    try {
+      await powershellElevated(vddInstallScript(dir, arch, files));
+    } catch (e) {
+      let reason = '';
+      try { reason = fs.readFileSync(path.join(dir, 'result.txt'), 'utf8').trim(); } catch (_) { /* no log: not started */ }
+      throw new Error(reason || 'administrator permission was not given');
+    }
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, reason: e.message };
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 ipcMain.handle('vdd-set', async (_e, on) => {
   await powershellElevated(`${vddFilter} | ${on ? 'Enable' : 'Disable'}-PnpDevice -Confirm:$false`);
