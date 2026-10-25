@@ -48,7 +48,10 @@ function startReport(target) {
     lastProjector = p;
     // Native player: "decoded N"; web player: "Picture WxH  N fps".
     const decoded = /decoded (\d+)/.exec(p.stats || '') || /Picture\s+\S+\s+(\d+) fps/.exec(p.stats || '');
-    if (decoded && session) session.adaptToProjector(parseInt(decoded[1], 10)).catch(() => {});
+    const arriving = /arriving (\d+)/.exec(p.stats || '');
+    if (decoded && session) {
+      session.adaptToProjector(parseInt(decoded[1], 10), arriving ? parseInt(arriving[1], 10) : null).catch(() => {});
+    }
     const text = p.error ? 'No answer: ' + p.error : (p.stats || 'No data yet');
     $('projStats').textContent = p.error ? text : `${p.mode || ''} · decoding: ${p.decoding || '?'}\n${text}`;
     checkStill();

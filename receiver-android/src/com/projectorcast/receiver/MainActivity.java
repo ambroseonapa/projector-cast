@@ -162,6 +162,11 @@ public class MainActivity extends Activity implements CastServer.Handler {
 
         ui.postDelayed(ipWatcher, 3000);
         watchAudioOutputs();
+        ui.postDelayed(new Runnable() {
+            public void run() {
+                measureSync();
+            }
+        }, 4000);
         registerReceiver(installResult, new IntentFilter(INSTALL_ACTION));
     }
 
@@ -219,7 +224,8 @@ public class MainActivity extends Activity implements CastServer.Handler {
             o.put("casting", nativeCasting() ? "native" : "web or idle");
             o.put("picture", "brightness " + setting(0) + ", contrast " + setting(1) + ", colour " + setting(2) + ", sharpness " + setting(3)
                     + (player != null && player.picture.failed() ? " (not supported by this GPU)" : ""));
-            o.put("lipSync", syncMs() + " ms, sound on " + (bluetoothOut ? "Bluetooth" : "speaker"));
+            o.put("lipSync", syncMs() + " ms" + (syncAuto() ? " (auto)" : "") + ", sound on " + (bluetoothOut ? "Bluetooth" : "speaker")
+                    + ", measured Bluetooth " + prefs().getInt("measuredBluetooth", -1) + " ms, speaker " + prefs().getInt("measuredSpeaker", -1) + " ms");
             o.put("stats", text[0]);
             JSONArray ev = new JSONArray();
             synchronized (events) {
@@ -672,17 +678,58 @@ public class MainActivity extends Activity implements CastServer.Handler {
 
     // ---- Lip sync: Bluetooth speakers play sound 150-300 ms late, so the picture is delayed to match ----
 
+    private static final int SYNC_MAX = 1500;
     private boolean bluetoothOut;
+    private boolean measuring;
 
-    /** Delay in ms, kept separately for Bluetooth and for the projector's own speaker. */
+    private String syncKey() {
+        return bluetoothOut ? "syncBluetooth" : "syncSpeaker";
+    }
+
+    /** True while the delay for the current output is measured rather than set in the menu. */
+    private boolean syncAuto() {
+        return bluetoothOut && !prefs().contains("syncBluetooth");
+    }
+
+    /**
+     * Delay in ms, kept separately for Bluetooth and for the projector's own speaker. With Bluetooth
+     * it is measured unless set in the menu: the speaker's measured delay minus that of the built-in
+     * speaker, which plays in step without any delay.
+     */
     private int syncMs() {
-        return bluetoothOut ? prefs().getInt("syncBluetooth", 200) : prefs().getInt("syncSpeaker", 0);
+        if (!syncAuto()) return prefs().getInt(syncKey(), 0);
+        int bt = prefs().getInt("measuredBluetooth", -1);
+        if (bt < 0) return 200;
+        return Math.max(0, Math.min(SYNC_MAX, bt - prefs().getInt("measuredSpeaker", 100)));
     }
 
     private void applySync() {
         bluetoothOut = bluetoothConnected();
         if (player != null) player.setVideoDelay(syncMs());
         js("setVideoDelay(" + syncMs() + ")");
+    }
+
+    /** Measures the current output's delay in the background (a second of silence), then applies it. */
+    private void measureSync() {
+        if (measuring || Build.VERSION.SDK_INT < 23) return;
+        final boolean bt = bluetoothConnected();
+        if (!bt && prefs().contains("measuredSpeaker")) return;
+        measuring = true;
+        new Thread(new Runnable() {
+            public void run() {
+                final int ms = OutputLatency.measure();
+                ui.post(new Runnable() {
+                    public void run() {
+                        measuring = false;
+                        log("sound delay measured on " + (bt ? "Bluetooth" : "speaker") + ": " + (ms < 0 ? "failed" : ms + " ms"));
+                        if (ms < 0 || bt != bluetoothConnected()) return;
+                        prefs().edit().putInt(bt ? "measuredBluetooth" : "measuredSpeaker", ms).apply();
+                        applySync();
+                        if (menuOpen) setMenu(true);
+                    }
+                });
+            }
+        }, "sound-delay").start();
     }
 
     private boolean bluetoothConnected() {
@@ -715,6 +762,8 @@ public class MainActivity extends Activity implements CastServer.Handler {
         boolean was = bluetoothOut;
         applySync();
         if (was != bluetoothOut) {
+            if (bluetoothOut) prefs().edit().remove("measuredBluetooth").apply(); // may be another speaker
+            measureSync();
             log("sound output: " + (bluetoothOut ? "Bluetooth" : "speaker") + ", lip sync " + syncMs() + " ms");
             if (menuOpen) setMenu(true);
         }
@@ -741,7 +790,7 @@ public class MainActivity extends Activity implements CastServer.Handler {
             if (i < SETTINGS.length || i == SYNC_ROW) {
                 String name = i == SYNC_ROW ? "Lip sync" : SETTINGS[i];
                 int v = i == SYNC_ROW ? syncMs() : setting(i);
-                String value = i == SYNC_ROW ? (v > 0 ? "+" : "") + v + " ms" : (v > 0 && i < 3 ? "+" : "") + v;
+                String value = i == SYNC_ROW ? (syncAuto() ? "Auto " : "+") + v + " ms" : (v > 0 && i < 3 ? "+" : "") + v;
                 b.append(String.format(java.util.Locale.US, "%-11s", name))
                         .append(sel ? "\u25c0 " + value + " \u25b6" : "  " + value);
                 if (i == 3 && mode != 1) b.append("  (display mode 1 only)");
@@ -751,7 +800,11 @@ public class MainActivity extends Activity implements CastServer.Handler {
             }
             b.append('\n');
         }
-        if (menuRow == SYNC_ROW) b.append("\nMouth moves after the voice: lower. Voice after the mouth: raise.\n");
+        if (menuRow == SYNC_ROW) {
+            b.append("\nMouth moves after the voice: lower. Voice before the mouth: raise.\n");
+            if (bluetoothOut && !syncAuto()) b.append("OK: back to Auto (measured)\n");
+            else if (measuring) b.append("Measuring the speaker\u2026\n");
+        }
         b.append("\n\u25b2\u25bc choose  \u25c0\u25b6 change  OK select  Back close");
         menuView.setText(b.toString());
         menuView.setVisibility(View.VISIBLE);
@@ -765,8 +818,8 @@ public class MainActivity extends Activity implements CastServer.Handler {
 
     private void menuChange(int step) {
         if (menuRow == SYNC_ROW) {
-            int v = Math.max(0, Math.min(800, syncMs() + step * 20));
-            prefs().edit().putInt(bluetoothOut ? "syncBluetooth" : "syncSpeaker", v).apply();
+            int v = Math.max(0, Math.min(SYNC_MAX, syncMs() + step * 20));
+            prefs().edit().putInt(syncKey(), v).apply();
             applySync();
             setMenu(true);
             return;
@@ -780,7 +833,12 @@ public class MainActivity extends Activity implements CastServer.Handler {
     }
 
     private void menuSelect() {
-        if (menuRow < SETTINGS.length || menuRow == SYNC_ROW) {
+        if (menuRow == SYNC_ROW && bluetoothOut && !syncAuto()) {
+            prefs().edit().remove("syncBluetooth").apply();
+            log("lip sync back to automatic");
+            applySync();
+            setMenu(true);
+        } else if (menuRow < SETTINGS.length || menuRow == SYNC_ROW) {
             setMenu(false);
         } else if (menuRow == RESET_ROW) {
             SharedPreferences.Editor e = prefs().edit();

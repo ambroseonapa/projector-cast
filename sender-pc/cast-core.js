@@ -317,16 +317,22 @@
     }
 
     /**
-     * Called every 2 s with the projector's decoded frame rate. Frames sent faster than the projector
-     * decodes them queue up and the picture lags behind the sound, so the send rate is capped just
-     * below the decode rate. The cap is raised again after 10 s of keeping up (longer if a raise fails).
+     * Called every 2 s with the projector's decoded frame rate, and the rate frames reach it when the
+     * native player reports that. Frames arriving faster than the projector decodes them queue up and
+     * the picture lags behind the sound, so the send rate is capped just below the decode rate. The cap
+     * is raised again after 10 s of keeping up (longer if a raise fails).
      */
-    async adaptToProjector(decodedFps) {
+    async adaptToProjector(decodedFps, arrivingFps) {
       if (this.stopped || !this.pc || !(decodedFps >= 0) || this.lastSentFps == null) return;
-      this.samples = (this.samples || []).concat({ decoded: decodedFps, sent: this.lastSentFps }).slice(-3);
+      const arriving = arrivingFps >= 0 ? arrivingFps : null;
+      this.samples = (this.samples || []).concat({ decoded: decodedFps, sent: this.lastSentFps, arriving }).slice(-3);
       if (this.samples.length < 3) return;
       const decoded = this.samples.reduce((a, x) => a + x.decoded, 0) / 3;
       const sent = this.samples.reduce((a, x) => a + x.sent, 0) / 3;
+      // Compare with what reached the projector: the PC's own count is taken over a different
+      // 2 s window and differs a lot when the picture keeps changing between moving and still.
+      const reached = this.samples.every((x) => x.arriving != null)
+        ? this.samples.reduce((a, x) => a + x.arriving, 0) / 3 : sent;
       const cap = this.fpsCap || this.q.fps;
       // A still or paused source sends few frames; that says nothing about the projector. (Compare
       // with the cap too: once capped low, the PC never sends more than the cap.)
@@ -336,7 +342,7 @@
       }
       this.raiseWait = this.raiseWait || 10000;
       let next = cap;
-      if (decoded < sent * 0.88) {
+      if (decoded < reached * 0.88) {
         next = Math.max(10, Math.floor(decoded * 0.9));
         // The last raise overshot: wait longer before the next one.
         if (this.raisedAt && Date.now() - this.raisedAt < 15000) this.raiseWait = Math.min(this.raiseWait * 2, 120000);

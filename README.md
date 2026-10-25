@@ -49,7 +49,7 @@ The menu adjusts **Brightness**, **Contrast** and **Colour** (−50 to +50) and 
 
 ### Lip sync
 
-Bluetooth speakers and headphones play sound 150–300 ms late. **Menu → Sound → Lip sync** shows the picture later by the same amount (0–800 ms, in 20 ms steps): lower it if the mouth moves after the voice, raise it if the voice comes after the mouth. The value is kept separately for Bluetooth (starts at 200 ms) and for the projector's own speaker (starts at 0), and switches automatically when a Bluetooth speaker connects or disconnects.
+Bluetooth speakers and headphones play sound late, from about 150 ms to over 500 ms on some speakers. The projector shows the picture later by the same amount. With Bluetooth this is automatic: when a speaker connects, the projector measures its delay (it plays a second of silence) and uses that. **Menu → Sound → Lip sync** shows the value (*Auto*); ◀ ▶ sets it by hand in 20 ms steps up to 1500 ms (lower it if the mouth moves after the voice, raise it if the voice comes before the mouth), and OK returns to *Auto*. The built-in speaker has its own value, 0 by default.
 
 ### Controlling the PC
 
@@ -72,6 +72,7 @@ Windows is fully supported. On Linux, players that support MPRIS are controlled 
 | Picture stalls | The projector switches decoder automatically. If it keeps stalling, choose display mode 4. |
 | Picture is choppy | Use **540p, 30 fps**. The PC lowers its frame rate to what the projector decodes; the status line shows *capped at N fps*. |
 | Video area black or frozen when casting a browser window | Browsers stop drawing video in covered or background windows. Keep the window visible, cast the entire screen, or turn off *Use graphics acceleration when available* in the browser's System settings. The PC app shows a notice when this happens. |
+| Netflix, Disney+, Prime Video show a black picture (sound plays) | These services block screen capture of their videos as copy protection; no screen-casting app can show them. Use the service's own app on the projector, a streaming stick, or an HDMI cable. |
 | Black or flashing frames | Set **Advanced → Screen capture → Compatibility** (affects whole-screen capture only). |
 | No sound | Audio capture requires Windows. Check **Send sound** and the projector volume. |
 

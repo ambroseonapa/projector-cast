@@ -213,6 +213,19 @@ async function run(browser, opts, label, gpu) {
     });
     assert.strictEqual(after, before, 'still source leaves the cap alone: ' + before + ' -> ' + after);
     console.log('PASS a still source does not lower the frame rate');
+    // From a real report: the PC counts 17 fps, 12 reach the projector and all 12 are decoded.
+    // The projector keeps up, so the cap must stay; a projector that decodes 12 of 20 must lower it.
+    const caps = await sender.evaluate(async () => {
+      const s = window.session;
+      const feed = async (sentFps, decoded, arriving) => {
+        Object.assign(s, { fpsCap: 20, samples: [] });
+        for (let i = 0; i < 3; i++) { s.lastSentFps = sentFps; await s.adaptToProjector(decoded, arriving); }
+        return s.fpsCap;
+      };
+      return [await feed(17, 12, 12), await feed(20, 12, 20)];
+    });
+    assert.deepStrictEqual(caps, [20, 10], 'cap follows what the projector decodes of what reached it: ' + caps);
+    console.log('PASS frames lost on the way do not lower the frame rate; a slow decoder does');
     // Capped low (11 fps) and keeping up: the cap must still be able to rise again.
     const raised = await sender.evaluate(async () => {
       const s = window.session;
