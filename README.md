@@ -47,6 +47,16 @@ On touch devices: tap to show or hide status, swipe left or right to change disp
 
 The menu adjusts **Brightness**, **Contrast** and **Colour** (−50 to +50) and **Sharpness** (0 to 100). Settings are kept on the projector and apply to every cast. Sharpness works in display mode 1 only. **Reset picture** restores the defaults. On a still picture, a change shows once the next frame arrives.
 
+### Links on the projector
+
+**Open a link on the projector** (below the casting card) opens any web page in a full-screen browser inside the projector app, without casting — useful when the projector's own apps are out of date. Paste a link (e.g. `youtube.com`) and press **Open**; sign-ins are remembered.
+
+- Projector remote: arrows move a pointer, OK clicks, pushing against the top or bottom edge scrolls (channel/page keys scroll faster), ⏯ ⏪ ⏩ control the page's video, Back goes back a page and closes the browser on the first page.
+- From the PC: **Back**, **Reload**, **Play / pause**, **Full screen** (the video fills the screen), **Close**, and **Type on the projector** — select a text box on the projector, type on the PC; Enter also presses Enter on the page.
+- **Desktop site** asks for the computer version of pages.
+
+Some services do not allow playback in Android browsers (Netflix, for example, sends them to its app); that is up to the service.
+
 ### Sound from one app (Windows 10 build 20348 / Windows 11)
 
 **Sound from** chooses what the projector hears:

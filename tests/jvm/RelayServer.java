@@ -29,6 +29,9 @@ public class RelayServer {
             public String onStats() {
                 try { return post("/stats", "{}"); } catch (Exception e) { return "{\"error\":\"no stats\"}"; }
             }
+            public void onBrowser(String json) throws Exception {
+                post("/browser", json);
+            }
             public void onStop() {
                 System.out.println("stop");
                 try { post("/stop", "{}"); } catch (Exception ignored) { }

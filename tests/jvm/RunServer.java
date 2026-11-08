@@ -11,6 +11,7 @@ public class RunServer {
             public void onStop() { System.out.println("STOP"); }
             public void onUpdate(byte[] b) { System.out.println("UPDATE " + b.length); }
             public String onStats() { return "{\"stats\":\"Picture 1280x720\",\"events\":[]}"; }
+            public void onBrowser(String json) { System.out.println("BROWSER " + json); }
         }).start();
         System.out.println("READY");
         Thread.sleep(Long.MAX_VALUE);

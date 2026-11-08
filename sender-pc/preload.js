@@ -27,6 +27,7 @@ contextBridge.exposeInMainWorld('cast', {
   openDisplaySettings: () => ipcRenderer.invoke('open-display-settings'),
   remoteKey: (key) => ipcRenderer.invoke('remote-key', key),
   previewInput: (input) => ipcRenderer.invoke('preview-input', input),
+  browser: (ip, code, command) => ipcRenderer.invoke('browser', { ip, code, command }),
   appAudioSupported: () => ipcRenderer.invoke('app-audio-supported'),
   appAudioStart: (target, mute) => ipcRenderer.invoke('app-audio-start', { ...target, mute }),
   onAppAudioShared: (cb) => ipcRenderer.on('app-audio-shared', (_e, names) => cb(names)),

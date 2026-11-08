@@ -42,6 +42,7 @@ public class ServerTest {
         final String[] seen = new String[2];
         final boolean[] stopped = {false};
         final byte[][] apk = {null};
+        final String[] browser = {null};
         CastServer server = new CastServer("482193", "Smart \"Projector\"", 7, new CastServer.Handler() {
             public String onOffer(String offer, String sender, String ip) throws Exception {
                 seen[0] = offer; seen[1] = sender;
@@ -51,6 +52,10 @@ public class ServerTest {
             public void onStop() { stopped[0] = true; }
             public void onUpdate(byte[] b) { apk[0] = b; }
             public String onStats() { return "{\"stats\":\"test\"}"; }
+            public void onBrowser(String json) throws Exception {
+                if (json.contains("bad")) throw new Exception("not a web link");
+                browser[0] = json;
+            }
         });
         server.start();
 
@@ -104,6 +109,12 @@ public class ServerTest {
         check(r[0].equals("200") && r[1].contains("\"stats\""), "stats with the right code");
         r = http("GET", "/stats", "111111", null);
         check(r[0].equals("403"), "stats need the code");
+        r = http("POST", "/browser", "482193", "{\"action\":\"open\",\"url\":\"https://www.youtube.com/\"}");
+        check(r[0].equals("200") && browser[0].contains("youtube"), "browser command delivered");
+        r = http("POST", "/browser", "482193", "{\"action\":\"bad\"}");
+        check(r[0].equals("400") && r[1].contains("not a web link"), "browser error reported");
+        r = http("POST", "/browser", "000000", "{\"action\":\"open\",\"url\":\"https://example.com/\"}");
+        check(r[0].equals("403"), "browser commands need the code");
         http("POST", "/stop", "482193", "{}"); // reset wrong-code counter
         r = http("GET", "/nothing", null, null);
         check(r[0].equals("404"), "unknown path is 404");

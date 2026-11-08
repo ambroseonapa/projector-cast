@@ -27,6 +27,7 @@ import java.util.Map;
  *   POST /stop   (X-Cast-Code) -> {"ok":true}
  *   POST /update (X-Cast-Code) body = new APK -> {"ok":true}; Android then asks to install it
  *   GET  /stats  (X-Cast-Code) -> what the projector sees right now, for the PC's report
+ *   POST /browser (X-Cast-Code) body = {"action":"open","url":...} etc. -> {"ok":true}; the link browser
  */
 public class CastServer {
 
@@ -50,6 +51,9 @@ public class CastServer {
 
         /** JSON with the projector's current stats and recent events. */
         String onStats();
+
+        /** A link-browser command from the PC: {"action": "open", "url": ...}, "back", "type" with "text"... */
+        void onBrowser(String commandJson) throws Exception;
     }
 
     private final String code;
@@ -201,6 +205,13 @@ public class CastServer {
             } else if (path.equals("/stop")) {
                 handler.onStop();
                 respond(out, 200, "{\"ok\":true}");
+            } else if (path.equals("/browser")) {
+                try {
+                    handler.onBrowser(new String(body, 0, read, UTF8));
+                    respond(out, 200, "{\"ok\":true}");
+                } catch (Exception e) {
+                    respond(out, 400, "{\"error\":" + quote(String.valueOf(e.getMessage())) + "}");
+                }
             } else if (path.equals("/update")) {
                 try {
                     handler.onUpdate(body);

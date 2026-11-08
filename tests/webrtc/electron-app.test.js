@@ -21,6 +21,7 @@ const RECEIVER = 'file://' + path.resolve(__dirname, '../../receiver-android/ass
   await receiver.evaluate(() => showInfo('482193', '127.0.0.1', 'Relay Projector'));
   const seenIps = [];
   let updateSeen = null;
+  const browserSeen = [];
 
   // Stand-in for MainActivity: what it does with evaluateJavascript + the Cast bridge.
   http.createServer((req, res) => {
@@ -34,6 +35,7 @@ const RECEIVER = 'file://' + path.resolve(__dirname, '../../receiver-android/ass
           return;
         }
         if (req.url === '/update') { updateSeen = JSON.parse(body); res.end('{}'); return; }
+        if (req.url === '/browser') { browserSeen.push(JSON.parse(body)); res.end('{}'); return; }
         if (req.url === '/stop') { await receiver.evaluate(() => stopCast('The PC stopped casting')); res.end('{}'); return; }
         const { offer, sender, ip } = JSON.parse(body);
         seenIps.push(ip);
@@ -285,6 +287,26 @@ const RECEIVER = 'file://' + path.resolve(__dirname, '../../receiver-android/ass
   console.log('PASS a closed window is refused instead of casting the whole screen');
   await receiver.screenshot({ path: path.join(__dirname, 'out-projector-window.png') });
   const userData = await app.evaluate(({ app: a }) => a.getPath('userData'));
+  // Links: an old projector app is asked to update; a current one gets the commands.
+  await win.click('#linkPanel summary');
+  await win.fill('#linkUrl', 'youtube.com');
+  await win.click('#linkOpen');
+  await win.waitForFunction(() => /needs an update/.test(document.getElementById('error').textContent), null, { timeout: 15000 });
+  await win.evaluate(() => { linkTarget = { ip: '127.0.0.1', code: '482193', version: 17 }; });
+  await win.click('#linkOpen');
+  await win.waitForFunction(() => document.getElementById('error').textContent === 'Opened on the projector.', null, { timeout: 5000 });
+  await win.click('[data-act="play"]');
+  await win.fill('#linkText', 'football highlights');
+  await win.press('#linkText', 'Enter');
+  await win.waitForTimeout(500);
+  assert.deepStrictEqual(browserSeen, [
+    { action: 'open', url: 'youtube.com', desktop: false },
+    { action: 'play' },
+    { action: 'type', text: 'football highlights', enter: true },
+  ], JSON.stringify(browserSeen));
+  assert.strictEqual(await win.inputValue('#linkText'), '', 'typed text is cleared after sending');
+  console.log('PASS links: opened, controlled and typed into on the projector (old projector apps asked to update)');
+
   assert.strictEqual(await win.inputValue('#capture'), 'auto');
   assert(seenIps.every((ip) => /^\d+\.\d+\.\d+\.\d+$/.test(ip)), 'PC address passed to receiver: ' + seenIps);
   assert.deepStrictEqual(errors, [], 'no errors in the app window');

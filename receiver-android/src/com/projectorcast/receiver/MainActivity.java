@@ -509,6 +509,10 @@ public class MainActivity extends Activity implements CastServer.Handler {
     public String onOffer(String offerJson, String senderName, String senderIp) throws Exception {
         if (!pageReady) throw new Exception("receiver not ready yet, try again");
         log("offer from " + senderName + " (" + senderIp + "), display mode " + mode + "/4 " + MODES[mode]);
+        // Casting takes over from the link browser.
+        ui.post(new Runnable() {
+            public void run() { if (BrowserActivity.current != null) BrowserActivity.current.finish(); }
+        });
         if (mode == 1 && player != null) return nativeOffer(offerJson, senderName, senderIp);
         int id;
         CountDownLatch latch = new CountDownLatch(1);
@@ -551,6 +555,43 @@ public class MainActivity extends Activity implements CastServer.Handler {
         answer.put("type", "answer");
         answer.put("sdp", answerSdp);
         return answer.toString();
+    }
+
+    /** Link browser commands from the PC: "open" starts the browser, the rest go to the open page. */
+    @Override
+    public void onBrowser(String commandJson) throws Exception {
+        final JSONObject c = new JSONObject(commandJson);
+        final String action = c.optString("action");
+        if (action.equals("type")) {
+            BrowserActivity.type(c.optString("text"), c.optBoolean("enter"));
+            return;
+        }
+        final String url = action.equals("open") ? BrowserActivity.cleanUrl(c.optString("url")) : null;
+        if (url != null && c.has("desktop")) prefs().edit().putBoolean("desktopSite", c.optBoolean("desktop")).apply();
+        final Exception[] error = {null};
+        final CountDownLatch done = new CountDownLatch(1);
+        ui.post(new Runnable() {
+            public void run() {
+                try {
+                    BrowserActivity b = BrowserActivity.current;
+                    if (b != null) {
+                        b.command(c);
+                    } else if (url != null) {
+                        if (nativeCasting()) showIdle("");
+                        else js("if (pc) stopCast('')");
+                        log("link opened: " + android.net.Uri.parse(url).getHost());
+                        startActivity(new Intent(MainActivity.this, BrowserActivity.class).putExtra(BrowserActivity.EXTRA_URL, url));
+                    } else {
+                        throw new Exception("no page is open on the projector");
+                    }
+                } catch (Exception e) {
+                    error[0] = e;
+                }
+                done.countDown();
+            }
+        });
+        done.await(3, TimeUnit.SECONDS);
+        if (error[0] != null) throw error[0];
     }
 
     @Override

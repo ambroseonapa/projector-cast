@@ -121,6 +121,30 @@
     <button id="stop" class="danger">Stop casting</button>
   </section>
 
+  <section class="card link-card">
+    <details id="linkPanel">
+      <summary>Open a link on the projector</summary>
+      <div class="row link-row">
+        <input id="linkUrl" placeholder="Paste a link, e.g. youtube.com" autocomplete="off" spellcheck="false">
+        <button id="linkOpen" class="primary" type="button">Open</button>
+      </div>
+      <label class="check"><input type="checkbox" id="desktopSite"> Desktop site</label>
+      <div class="row link-actions">
+        <button class="secondary" type="button" data-act="back">Back</button>
+        <button class="secondary" type="button" data-act="reload">Reload</button>
+        <button class="secondary" type="button" data-act="play">Play / pause</button>
+        <button class="secondary" type="button" data-act="fullscreen">Full screen</button>
+        <button class="secondary" type="button" data-act="close">Close</button>
+      </div>
+      <label for="linkText">Type on the projector</label>
+      <div class="row link-row">
+        <input id="linkText" placeholder="Select a text box on the projector, then type here" autocomplete="off">
+        <button id="linkType" class="secondary" type="button">Send</button>
+      </div>
+      <p class="hint">On the projector: arrows move the pointer, OK clicks, Back goes back. Enter in the box above also presses Enter on the page.</p>
+    </details>
+  </section>
+
   <p id="error" class="error" role="alert"></p>
   <p id="pcUpdate" class="update-line" hidden>
     <span id="pcUpdateText"></span>

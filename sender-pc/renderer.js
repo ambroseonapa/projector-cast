@@ -330,7 +330,7 @@ async function vddAction(button, work, busyText) {
 // ---- Sound of one app (Windows) ----
 
 // 'pc' (whole PC), 'same' (match the picture: its app, or the apps on the cast screen) or 'app:<name>'.
-let soundChoice = 'same';
+let soundChoice = 'pc';
 let appAudio = null;
 
 const appName = (s) => (s.app && s.app !== 'Other' ? s.app : s.title);
@@ -560,6 +560,62 @@ function showInPreviewWindow() {
   if (v) v.srcObject = $('preview').srcObject;
 }
 
+// ---- Links: a browser on the projector ----
+
+const LINK_VERSION = 17; // first projector app with the link browser
+let linkTarget = null;
+
+async function browserCommand(command) {
+  showError('');
+  const code = $('code').value.trim();
+  if (!/^\d{6}$/.test(code)) return showError('Enter the 6-digit code shown on the projector.');
+  try {
+    if (!linkTarget || linkTarget.code !== code) linkTarget = { ...(await findTarget(code, $('ip').value.trim())), code };
+    if ((linkTarget.version || 0) < LINK_VERSION) {
+      linkTarget = null;
+      throw new Error('The projector app needs an update for links: press Start casting once and accept the update.');
+    }
+    // The projector shows one thing at a time: a link replaces the cast.
+    if (command.action === 'open' && session) session.stop('Stopped');
+    await window.cast.browser(linkTarget.ip, code, command);
+    if (command.action === 'open') {
+      store('lastLink', command.url);
+      showNote('Opened on the projector.');
+    }
+  } catch (e) {
+    if (!/no page is open|select a text box/.test(cleanError(e))) linkTarget = null;
+    showError(cleanError(e));
+  }
+}
+
+function setupLinks() {
+  $('linkUrl').value = store('lastLink') || '';
+  $('desktopSite').checked = store('desktopSite') === '1';
+  const open = () => {
+    const url = $('linkUrl').value.trim();
+    if (!url) return showError('Paste a link first.');
+    browserCommand({ action: 'open', url, desktop: $('desktopSite').checked });
+  };
+  $('linkOpen').addEventListener('click', open);
+  $('linkUrl').addEventListener('keydown', (e) => { if (e.key === 'Enter') open(); });
+  $('desktopSite').addEventListener('change', () => {
+    store('desktopSite', $('desktopSite').checked ? '1' : '0');
+    // Applies to an open page at once (reloads it); otherwise with the next link.
+    if (linkTarget) browserCommand({ action: 'desktop', on: $('desktopSite').checked });
+  });
+  for (const b of document.querySelectorAll('[data-act]')) {
+    b.addEventListener('click', () => browserCommand({ action: b.dataset.act }));
+  }
+  const type = async (enter) => {
+    const text = $('linkText').value;
+    if (!text && !enter) return;
+    await browserCommand({ action: 'type', text, enter });
+    if (!$('error').textContent || $('error').className.includes('ok')) $('linkText').value = '';
+  };
+  $('linkType').addEventListener('click', () => type(false));
+  $('linkText').addEventListener('keydown', (e) => { if (e.key === 'Enter') type(true); });
+}
+
 // ---- Casting ----
 
 async function init() {
@@ -597,7 +653,7 @@ async function init() {
 
   if (await window.cast.appAudioSupported()) {
     $('appSound').hidden = false;
-    soundChoice = store('soundChoice') || 'same';
+    soundChoice = store('soundChoice') || 'pc';
     $('audio').addEventListener('change', updateSoundUi);
     window.cast.onAppAudioShared((names) => {
       $('liveHint').textContent = names
@@ -629,6 +685,7 @@ async function init() {
   $('start').addEventListener('click', start);
   $('stop').addEventListener('click', () => session && session.stop('Stopped'));
   $('popPreview').addEventListener('click', openPreviewWindow);
+  setupLinks();
   window.addEventListener('focus', () => { if (!session) loadScreens(); });
   await loadScreens();
 }

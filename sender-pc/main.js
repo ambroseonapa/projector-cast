@@ -702,4 +702,5 @@ ipcMain.handle('projector-stats', (_e, { ip, code }) => request(ip, 'GET', '/sta
 ipcMain.handle('copy-text', (_e, text) => { clipboard.writeText(String(text)); return true; });
 ipcMain.handle('app-info', () => ({ version: app.getVersion(), os: `${os.type()} ${os.release()} ${os.arch()}` }));
 ipcMain.handle('send-offer', (_e, { ip, code, offer }) => request(ip, 'POST', '/offer', code, JSON.stringify(offer), 25000));
+ipcMain.handle('browser', (_e, { ip, code, command }) => request(ip, 'POST', '/browser', code, JSON.stringify(command), 8000));
 ipcMain.handle('send-stop', (_e, { ip, code }) => request(ip, 'POST', '/stop', code, '{}', 3000).catch(() => null));

@@ -71,3 +71,10 @@ button { width: 100%; margin-top: 18px; padding: 12px; border: 0; border-radius:
 .row { display: flex; gap: 8px; flex-wrap: wrap; }
 .row button { flex: 1; min-width: 120px; margin-top: 0; }
 .pick-card img.blank { background: var(--field); }
+.link-card { margin-top: 14px; }
+.link-card details { margin-top: 0; }
+.link-row { margin-top: 10px; flex-wrap: nowrap; }
+.link-row input { flex: 1; }
+.link-row button { flex: none; width: auto; min-width: 0; padding: 10px 16px; }
+.link-actions { margin-top: 10px; }
+.link-actions button { min-width: 90px; padding: 8px; font-weight: 400; font-size: 14px; }
