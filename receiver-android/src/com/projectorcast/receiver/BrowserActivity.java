@@ -34,9 +34,10 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
 /**
- * A full-screen browser for links sent from the PC app. The remote moves an on-screen pointer
- * (OK clicks, the top and bottom edges scroll), media keys control the page's video, and Back goes
- * back a page or closes the browser.
+ * A full-screen browser for links sent from the PC app. The arrows jump between the page's links and
+ * buttons (OK opens one); holding OK switches to a pointer (OK clicks, the top and bottom edges
+ * scroll). Media keys control the page's video, Back goes back a page or closes the browser. Pages
+ * made for TV remotes (YouTube's TV layout) get the remote's keys directly.
  */
 public class BrowserActivity extends Activity {
 
@@ -76,6 +77,14 @@ public class BrowserActivity extends Activity {
         CookieManager.getInstance().setAcceptThirdPartyCookies(web, true); // sign-in pages
         web.setWebViewClient(new WebViewClient() {
             @Override
+            public void onPageStarted(WebView view, String url, android.graphics.Bitmap icon) {
+                boolean tv = isTvPage(url);
+                if (tv && !pageKeys) say("Remote keys go to the page  \u00b7  Back: back / close", 5000);
+                pageKeys = tv;
+                if (tv) pointer.setVisibility(View.INVISIBLE);
+            }
+
+            @Override
             @SuppressWarnings("deprecation")
             public boolean shouldOverrideUrlLoading(WebView view, String url) {
                 // Web pages open here; "open in the app" links (intent:, market:...) are ignored.
@@ -100,7 +109,14 @@ public class BrowserActivity extends Activity {
 
             @Override
             public void onPermissionRequest(PermissionRequest request) {
-                request.deny(); // no camera or microphone
+                // Protected (DRM) video is allowed, as in Chrome; camera and microphone are not.
+                for (String r : request.getResources()) {
+                    if (PermissionRequest.RESOURCE_PROTECTED_MEDIA_ID.equals(r)) {
+                        request.grant(new String[]{r});
+                        return;
+                    }
+                }
+                request.deny();
             }
         });
         root.addView(web, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
@@ -122,7 +138,7 @@ public class BrowserActivity extends Activity {
         setContentView(root);
         current = this;
         open(getIntent().getStringExtra(EXTRA_URL));
-        say("▲▼◀▶ move  ·  OK click  ·  ⏯ play/pause  ·  Back: back / close", 6000);
+        say("▲▼◀▶ next link  ·  OK open  ·  hold OK: pointer  ·  Back: back / close", 6000);
     }
 
     @Override
@@ -160,7 +176,22 @@ public class BrowserActivity extends Activity {
     void open(String url) {
         if (url == null) return;
         exitFullscreen();
+        applyAgent(url);
         web.loadUrl(url);
+    }
+
+    /** YouTube's TV layout: made for remotes and low-power TVs, and only served to TV browsers. */
+    static boolean isTvPage(String url) {
+        return url != null && url.matches("(?i)^https?://(www\\.|m\\.)?youtube\\.com/tv.*");
+    }
+
+    private void applyAgent(String url) {
+        if (isTvPage(url)) {
+            web.getSettings().setUserAgentString("Mozilla/5.0 (SMART-TV; Linux; Tizen 6.0) AppleWebKit/537.36 "
+                    + "(KHTML, like Gecko) 76.0.3809.146/6.0 TV Safari/537.36");
+            return;
+        }
+        applyAgent();
     }
 
     private void applyAgent() {
@@ -182,8 +213,12 @@ public class BrowserActivity extends Activity {
     void command(JSONObject c) throws Exception {
         String action = c.optString("action");
         if (action.equals("open")) {
-            applyAgent(); // "Desktop site" may have changed
             open(cleanUrl(c.optString("url")));
+        } else if (action.equals("key")) {
+            // The PC's keyboard used as the remote.
+            int code = keyCode(c.optString("key"));
+            dispatchKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, code));
+            dispatchKeyEvent(new KeyEvent(KeyEvent.ACTION_UP, code));
         } else if (action.equals("back")) {
             back();
         } else if (action.equals("reload")) {
@@ -201,7 +236,7 @@ public class BrowserActivity extends Activity {
                     + "z-index:2147483647;background:#000;object-fit:contain';}}", null);
         } else if (action.equals("desktop")) {
             getSharedPreferences("cast", MODE_PRIVATE).edit().putBoolean("desktopSite", c.optBoolean("on")).apply();
-            applyAgent();
+            applyAgent(web.getUrl());
             web.reload();
         } else {
             throw new Exception("unknown command");
@@ -253,25 +288,72 @@ public class BrowserActivity extends Activity {
 
     // ---- Remote ----
 
+    private static int keyCode(String key) throws Exception {
+        if (key.equals("up")) return KeyEvent.KEYCODE_DPAD_UP;
+        if (key.equals("down")) return KeyEvent.KEYCODE_DPAD_DOWN;
+        if (key.equals("left")) return KeyEvent.KEYCODE_DPAD_LEFT;
+        if (key.equals("right")) return KeyEvent.KEYCODE_DPAD_RIGHT;
+        if (key.equals("ok")) return KeyEvent.KEYCODE_DPAD_CENTER;
+        if (key.equals("back")) return KeyEvent.KEYCODE_BACK;
+        if (key.equals("mode")) return KeyEvent.KEYCODE_MENU;
+        throw new Exception("unknown key");
+    }
+
+    private boolean pointerMode;   // otherwise the arrows jump between links
+    private boolean pageKeys;      // a page made for remotes gets the keys itself
+    private boolean okHeld;
+
+    private void toggleMode() {
+        pointerMode = !pointerMode;
+        if (pointerMode) {
+            pointer.show();
+            say("Pointer: ▲▼◀▶ move  ·  OK click  ·  hold OK: links", 4000);
+        } else {
+            pointer.setVisibility(View.INVISIBLE);
+            say("Links: ▲▼◀▶ next link  ·  OK open  ·  hold OK: pointer", 4000);
+        }
+    }
+
     @Override
     public boolean dispatchKeyEvent(KeyEvent event) {
         int code = event.getKeyCode();
         boolean down = event.getAction() == KeyEvent.ACTION_DOWN;
+        boolean ok = code == KeyEvent.KEYCODE_DPAD_CENTER || code == KeyEvent.KEYCODE_ENTER || code == KeyEvent.KEYCODE_NUMPAD_ENTER;
+        boolean arrow = code == KeyEvent.KEYCODE_DPAD_UP || code == KeyEvent.KEYCODE_DPAD_DOWN
+                || code == KeyEvent.KEYCODE_DPAD_LEFT || code == KeyEvent.KEYCODE_DPAD_RIGHT;
+        if (code == KeyEvent.KEYCODE_BACK) {
+            if (!down) back();
+            return true;
+        }
+        if (pageKeys && fullscreenView == null && (arrow || ok)) {
+            if (!web.hasFocus()) web.requestFocus();
+            return web.dispatchKeyEvent(event);
+        }
+        if (code == KeyEvent.KEYCODE_MENU) {
+            if (!down) toggleMode();
+            return true;
+        }
+        if (ok) {
+            // Holding OK switches between links and pointer.
+            if (down && event.getRepeatCount() > 0 && !okHeld && event.getEventTime() - event.getDownTime() >= 600) {
+                okHeld = true;
+                toggleMode();
+            } else if (!down) {
+                if (!okHeld) {
+                    if (pointerMode || fullscreenView != null) click();
+                    else linkClick();
+                }
+                okHeld = false;
+            }
+            return true;
+        }
+        if (arrow) {
+            if (!down) return true;
+            if (pointerMode || fullscreenView != null) movePointer(code, event.getRepeatCount());
+            else linkMove(code);
+            return true;
+        }
         switch (code) {
-            case KeyEvent.KEYCODE_BACK:
-                if (!down) back();
-                return true;
-            case KeyEvent.KEYCODE_DPAD_UP:
-            case KeyEvent.KEYCODE_DPAD_DOWN:
-            case KeyEvent.KEYCODE_DPAD_LEFT:
-            case KeyEvent.KEYCODE_DPAD_RIGHT:
-                if (down) movePointer(code, event.getRepeatCount());
-                return true;
-            case KeyEvent.KEYCODE_DPAD_CENTER:
-            case KeyEvent.KEYCODE_ENTER:
-            case KeyEvent.KEYCODE_NUMPAD_ENTER:
-                if (!down) click();
-                return true;
             case KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE:
             case KeyEvent.KEYCODE_MEDIA_PLAY:
             case KeyEvent.KEYCODE_MEDIA_PAUSE:
@@ -292,6 +374,46 @@ public class BrowserActivity extends Activity {
         }
     }
 
+    /**
+     * Link navigation, run in the page: the arrows move a highlight to the nearest link, button or
+     * box in that direction; "edge" when there is none (the page then scrolls).
+     */
+    static final String NAV = "window.__pcNav=window.__pcNav||(function(){var cur=null;"
+            + "function vis(e){var r=e.getBoundingClientRect();return r.width>4&&r.height>4&&r.bottom>0&&r.right>0"
+            + "&&r.top<innerHeight&&r.left<innerWidth&&getComputedStyle(e).visibility!=='hidden';}"
+            + "function all(){return [].slice.call(document.querySelectorAll('a[href],button,input,select,textarea,"
+            + "[role=button],[role=link],[role=tab],[role=menuitem],[tabindex]:not([tabindex=\"-1\"]),[onclick]')).filter(vis);}"
+            + "function mark(e){if(cur){cur.style.outline=cur.__pcOutline||'';cur.style.outlineOffset=cur.__pcOffset||'';}cur=e;"
+            + "if(e){e.__pcOutline=e.style.outline;e.__pcOffset=e.style.outlineOffset;e.style.outline='4px solid #2f8cff';"
+            + "e.style.outlineOffset='2px';e.scrollIntoView({block:'nearest',inline:'nearest'});}}"
+            + "return{move:function(d){var c=cur&&document.contains(cur)&&vis(cur)?cur:null;var els=all();"
+            + "if(!els.length)return 'edge';if(!c){mark(els[0]);return 'ok';}"
+            + "var a=c.getBoundingClientRect(),ax=a.left+a.width/2,ay=a.top+a.height/2,best=null,bs=1e9;"
+            + "els.forEach(function(e){if(e===c||c.contains(e)||e.contains(c))return;var r=e.getBoundingClientRect(),"
+            + "dx=r.left+r.width/2-ax,dy=r.top+r.height/2-ay;var m=d=='left'?-dx:d=='right'?dx:d=='up'?-dy:dy;"
+            + "var side=(d=='left'||d=='right')?Math.abs(dy):Math.abs(dx);if(m<=2)return;var sc=m+side*2;"
+            + "if(sc<bs){bs=sc;best=e;}});if(best){mark(best);return 'ok';}return 'edge';},"
+            + "click:function(){if(cur&&document.contains(cur)){cur.focus();cur.click();return 'ok';}return 'none';}};})();";
+
+    private void linkMove(final int code) {
+        final String dir = code == KeyEvent.KEYCODE_DPAD_UP ? "up" : code == KeyEvent.KEYCODE_DPAD_DOWN ? "down"
+                : code == KeyEvent.KEYCODE_DPAD_LEFT ? "left" : "right";
+        web.evaluateJavascript(NAV + "__pcNav.move('" + dir + "')", new ValueCallback<String>() {
+            public void onReceiveValue(String r) {
+                // Nothing further that way: scroll to bring more of the page in.
+                if ("\"edge\"".equals(r) && (dir.equals("up") || dir.equals("down"))) scrollAtPointer(dir.equals("up") ? -0.35f : 0.35f);
+            }
+        });
+    }
+
+    private void linkClick() {
+        web.evaluateJavascript(NAV + "__pcNav.click()", new ValueCallback<String>() {
+            public void onReceiveValue(String r) {
+                if (!"\"ok\"".equals(r)) linkMove(KeyEvent.KEYCODE_DPAD_DOWN); // nothing highlighted yet: highlight the first link
+            }
+        });
+    }
+
     /** Faster the longer a key is held; at the top or bottom edge the page scrolls instead. */
     private void movePointer(int code, int repeat) {
         float step = dp(14) * Math.min(1 + repeat / 3f, 5);
@@ -310,7 +432,8 @@ public class BrowserActivity extends Activity {
 
     /** Scrolls whatever scrolls under the pointer (a list, or the page) by part of a screen. */
     private void scrollAtPointer(float screens) {
-        pointer.show();
+        if (pointer.x < 0) { pointer.x = root.getWidth() / 2f; pointer.y = root.getHeight() / 2f; }
+        if (pointerMode) pointer.show();
         @SuppressWarnings("deprecation")
         float scale = web.getScale();
         float x = pointer.x / scale, y = pointer.y / scale;

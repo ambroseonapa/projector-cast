@@ -16,6 +16,7 @@ node node/remote-keys.test.js
 node node/app-audio.test.js
 kill $S1
 echo "== Projector picture shader =="; node webrtc/picture-shader.test.js
+echo "== Link browser navigation =="; node webrtc/link-nav.test.js
 echo "== WebRTC streaming =="; node webrtc/e2e.test.js | grep -v "sender over\|sender codecs"
 java -Dversion=2 -cp jvm/out RelayServer >/dev/null & S2=$!; sleep 1
 echo "== Real PC app ==";  xvfb-run -a -s "-screen 0 1920x1080x24" webrtc/with-wm.sh node webrtc/electron-app.test.js || { kill $S2; exit 1; }

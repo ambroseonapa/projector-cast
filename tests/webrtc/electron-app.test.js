@@ -298,14 +298,23 @@ const RECEIVER = 'file://' + path.resolve(__dirname, '../../receiver-android/ass
   await win.click('[data-act="play"]');
   await win.fill('#linkText', 'football highlights');
   await win.press('#linkText', 'Enter');
-  await win.waitForTimeout(500);
+  await win.focus('#linkRemote');
+  await win.keyboard.press('ArrowDown');
+  await win.keyboard.press('Enter');
+  await win.keyboard.press('Escape');
+  await win.click('#linkYoutube');
+  await win.waitForTimeout(800);
   assert.deepStrictEqual(browserSeen, [
     { action: 'open', url: 'youtube.com', desktop: false },
     { action: 'play' },
     { action: 'type', text: 'football highlights', enter: true },
+    { action: 'key', key: 'down' },
+    { action: 'key', key: 'ok' },
+    { action: 'key', key: 'back' },
+    { action: 'open', url: 'https://www.youtube.com/tv', desktop: false },
   ], JSON.stringify(browserSeen));
   assert.strictEqual(await win.inputValue('#linkText'), '', 'typed text is cleared after sending');
-  console.log('PASS links: opened, controlled and typed into on the projector (old projector apps asked to update)');
+  console.log('PASS links: opened, controlled (buttons and PC keyboard) and typed into on the projector; YouTube TV layout; old projector apps asked to update');
 
   assert.strictEqual(await win.inputValue('#capture'), 'auto');
   assert(seenIps.every((ip) => /^\d+\.\d+\.\d+\.\d+$/.test(ip)), 'PC address passed to receiver: ' + seenIps);

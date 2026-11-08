@@ -603,6 +603,18 @@ function setupLinks() {
     // Applies to an open page at once (reloads it); otherwise with the next link.
     if (linkTarget) browserCommand({ action: 'desktop', on: $('desktopSite').checked });
   });
+  $('linkYoutube').addEventListener('click', () => {
+    $('linkUrl').value = 'https://www.youtube.com/tv';
+    open();
+  });
+  // The PC keyboard as the projector remote.
+  const KEYS = { ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right', Enter: 'ok', Escape: 'back', Backspace: 'back', m: 'mode', M: 'mode' };
+  $('linkRemote').addEventListener('keydown', (e) => {
+    const key = KEYS[e.key];
+    if (!key) return;
+    e.preventDefault();
+    browserCommand({ action: 'key', key });
+  });
   for (const b of document.querySelectorAll('[data-act]')) {
     b.addEventListener('click', () => browserCommand({ action: b.dataset.act }));
   }

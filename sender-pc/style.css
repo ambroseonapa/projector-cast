@@ -78,3 +78,6 @@ button { width: 100%; margin-top: 18px; padding: 12px; border: 0; border-radius:
 .link-row button { flex: none; width: auto; min-width: 0; padding: 10px 16px; }
 .link-actions { margin-top: 10px; }
 .link-actions button { min-width: 90px; padding: 8px; font-weight: 400; font-size: 14px; }
+.remote-pad { margin-top: 12px; padding: 14px; border: 1px dashed var(--line); border-radius: 8px; color: var(--muted);
+  font-size: 13px; text-align: center; cursor: pointer; user-select: none; }
+.remote-pad:focus { outline: none; border: 1px solid var(--accent); color: var(--text); background: rgba(47, 140, 255, .08); }
