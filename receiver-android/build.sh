@@ -36,6 +36,12 @@ for abi in armeabi-v7a arm64-v8a x86 x86_64; do cp -r build/webrtc/jni/$abi buil
 aapt package -f -m -J build/gen -M AndroidManifest.xml -S res -I "$SDK"
 javac -Xlint:-options -source 8 -target 8 -bootclasspath "$SDK" -cp build/webrtc/classes.jar \
   -d build/classes $(find src build/gen -name '*.java')
+
+# MainActivity implements CastServer.Handler: a handler method named like an Activity method
+# would replace that one (an onStop() once made Android close the app when it went to the background).
+clash=$(comm -12 <(javap -cp "$SDK" android.app.Activity 2>/dev/null | grep -o ' on[A-Za-z]*(' | sort -u) \
+  <(javap -cp build/classes 'com.projectorcast.receiver.CastServer$Handler' 2>/dev/null | grep -o ' on[A-Za-z]*(' | sort -u))
+if [ -n "$clash" ]; then echo "CastServer.Handler method named like an Activity method:$clash" >&2; exit 1; fi
 (cd build/classes && jar cf ../app-classes.jar .)
 java -cp "$CACHE/$D8JAR" com.android.tools.r8.D8 --release --min-api 21 --lib "$SDK" \
   --output build/dex build/app-classes.jar build/webrtc/classes.jar 2>&1 | grep -v "^Warning\|JAVA_TOOL_OPTIONS" || true

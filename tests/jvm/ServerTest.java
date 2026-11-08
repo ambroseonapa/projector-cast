@@ -49,7 +49,7 @@ public class ServerTest {
                 if (offer.contains("explode")) throw new Exception("receiver said no");
                 return "{\"type\":\"answer\",\"sdp\":\"v=0\"}";
             }
-            public void onStop() { stopped[0] = true; }
+            public void onStopCast() { stopped[0] = true; }
             public void onUpdate(byte[] b) { apk[0] = b; }
             public String onStats() { return "{\"stats\":\"test\"}"; }
             public void onBrowser(String json) throws Exception {

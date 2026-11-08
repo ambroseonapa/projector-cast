@@ -595,7 +595,7 @@ public class MainActivity extends Activity implements CastServer.Handler {
     }
 
     @Override
-    public void onStop() {
+    public void onStopCast() {
         ui.post(new Runnable() {
             public void run() {
                 if (nativeCasting()) showIdle("");

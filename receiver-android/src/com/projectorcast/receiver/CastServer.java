@@ -44,7 +44,7 @@ public class CastServer {
          */
         String onOffer(String offerJson, String senderName, String senderIp) throws Exception;
 
-        void onStop();
+        void onStopCast();
 
         /** A newer copy of this app pushed by the PC app. */
         void onUpdate(byte[] apk) throws Exception;
@@ -203,7 +203,7 @@ public class CastServer {
                     respond(out, 500, "{\"error\":" + quote(String.valueOf(e.getMessage())) + "}");
                 }
             } else if (path.equals("/stop")) {
-                handler.onStop();
+                handler.onStopCast();
                 respond(out, 200, "{\"ok\":true}");
             } else if (path.equals("/browser")) {
                 try {

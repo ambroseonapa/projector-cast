@@ -8,7 +8,7 @@ public class RunServer {
                 System.out.println("OFFER from " + sender + ": " + offer.length() + " bytes");
                 return "{\"type\":\"answer\",\"sdp\":\"v=0\\r\\n\"}";
             }
-            public void onStop() { System.out.println("STOP"); }
+            public void onStopCast() { System.out.println("STOP"); }
             public void onUpdate(byte[] b) { System.out.println("UPDATE " + b.length); }
             public String onStats() { return "{\"stats\":\"Picture 1280x720\",\"events\":[]}"; }
             public void onBrowser(String json) { System.out.println("BROWSER " + json); }

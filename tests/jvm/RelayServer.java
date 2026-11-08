@@ -32,7 +32,7 @@ public class RelayServer {
             public void onBrowser(String json) throws Exception {
                 post("/browser", json);
             }
-            public void onStop() {
+            public void onStopCast() {
                 System.out.println("stop");
                 try { post("/stop", "{}"); } catch (Exception ignored) { }
             }
